@@ -126,6 +126,6 @@ This project demonstrates the application of modern web development and artifici
 ---
 
 **Author:** Oge Obubu  
-**Supervisor:** [Supervisor Name]  
+**Supervisor:** Dr Gambo  
 **Department of Computer Science and Engineering**  
 Obafemi Awolowo University, Ile-Ife, Nigeria
