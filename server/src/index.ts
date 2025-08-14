@@ -66,7 +66,10 @@ async function start() {
     logger.info("✅ Connected to MongoDB successfully")
     
     // Test the connection
-    
+    // const db = mongoose.connection.db
+    // const adminDb = db.admin()
+    // const result = await adminDb.listCollections().toArray()
+    // logger.info("📊 Database collections", { collections: result.map(c => c.name) })
     
     app.listen(PORT, () => {
       logger.info(`🚀 AlgoFinny API ready on http://localhost:${PORT}`)

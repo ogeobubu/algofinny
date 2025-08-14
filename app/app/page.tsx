@@ -25,12 +25,15 @@ export default function AppHome() {
   return token ? (
     <Dashboard onLogout={() => setToken(null)} />
   ) : (
-    <div className="min-h-screen bg-white dark:bg-gray-950">
-      <AuthForm
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-slate-800/90 backdrop-blur-xl border border-white/10 p-8 rounded-3xl shadow-2xl max-w-md w-full relative">
+       <AuthForm
         onAuthed={() => {
           setToken(getToken())
         }}
       />
+      </div>
+     
     </div>
   )
 }
