@@ -11,7 +11,7 @@ export function generateAdvice(transactions: ITransaction[]): string {
     return `You spent ₦${Math.round(foodSpent).toLocaleString()} on food. Try cooking at home to save 20%!`
   }
 
-  const expenses = transactions.filter((t) => t.type === "expense").reduce((s, t) => s + (t.amount || 0), 0)
+  const expenses = transactions.filter((t) => t.type === "debit").reduce((s, t) => s + (t.amount || 0), 0)
   if (expenses === 0) return "Add your expenses to get personalized savings tips."
 
   return "Great job tracking expenses! Consider setting a 20% savings goal this month."
