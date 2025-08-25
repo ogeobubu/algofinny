@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react"
 import { Transaction } from "@/lib/types"
 import { getAuthHeaders, removeToken } from "@/lib/auth"
+import { SummaryCards } from "./summary-cards"
 
 interface DashboardProps {
   onLogout: () => void
@@ -13,6 +14,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [loading, setLoading] = useState(true)
   const [advice, setAdvice] = useState<string>("")
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showUploadModal, setShowUploadModal] = useState(false)
+  const [uploadLoading, setUploadLoading] = useState(false)
+  const [uploadError, setUploadError] = useState("")
+  const [uploadSuccess, setUploadSuccess] = useState("")
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [newTransaction, setNewTransaction] = useState({
     description: "",
     amount: "",
@@ -97,24 +103,90 @@ export function Dashboard({ onLogout }: DashboardProps) {
     }
   }
 
+ const handleFileUpload = async (e: React.FormEvent) => {
+  e.preventDefault()
+  if (!selectedFile) {
+    setUploadError("Please select a file first")
+    return
+  }
+
+  setUploadLoading(true)
+  setUploadError("")
+  setUploadSuccess("")
+
+  try {
+    // Use the Next.js API route instead of direct Express server
+    const endpoint = "/api/bank/upload"
+
+    const formData = new FormData()
+    formData.append("statement", selectedFile)
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        // Include auth headers for the API route
+        ...getAuthHeaders(),
+      },
+      body: formData,
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || result.details || "Failed to upload statement")
+    }
+
+    // Show success message with processed transactions count
+    if (result.processed && result.processed.saved_transactions) {
+      setUploadSuccess(`✅ Successfully processed ${result.processed.saved_transactions} transactions!`)
+    } else if (result.message) {
+      setUploadSuccess(`✅ ${result.message}`)
+    } else {
+      setUploadSuccess("✅ Bank statement processed successfully!")
+    }
+    
+    // Refresh data after successful upload
+    setTimeout(() => {
+      setShowUploadModal(false)
+      setSelectedFile(null)
+      fetchTransactions()
+      fetchAdvice()
+    }, 3000)
+    
+  } catch (error) {
+    console.error("Error uploading statement:", error)
+    setUploadError(error instanceof Error ? error.message : "Failed to upload statement")
+  } finally {
+    setUploadLoading(false)
+  }
+}
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // Check if file is PDF or CSV
+      const validTypes = ["application/pdf", "text/csv", "application/vnd.ms-excel"]
+      if (!validTypes.includes(file.type)) {
+        setUploadError("Please upload a PDF or CSV file")
+        return
+      }
+      
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        setUploadError("File size must be less than 10MB")
+        return
+      }
+      
+      setSelectedFile(file)
+      setUploadError("")
+    }
+  }
+
   const handleLogout = () => {
     removeToken()
     onLogout()
   }
 
-  const calculateSummary = () => {
-    const income = transactions
-      .filter(t => t.type === "income")
-      .reduce((sum, t) => sum + t.amount, 0)
-    
-    const expenses = transactions
-      .filter(t => t.type === "expense")
-      .reduce((sum, t) => sum + t.amount, 0)
-    
-    return { income, expenses, balance: income - expenses }
-  }
-
-  const summary = calculateSummary()
   const formatCurrency = (amount: number) => `₦${Math.round(amount).toLocaleString()}`
 
   if (loading) {
@@ -141,6 +213,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
           </div>
           <div className="flex items-center space-x-4">
             <button
+              onClick={() => setShowUploadModal(true)}
+              className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            >
+              Upload Statement
+            </button>
+            <button
               onClick={() => setShowAddModal(true)}
               className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
             >
@@ -159,44 +237,39 @@ export function Dashboard({ onLogout }: DashboardProps) {
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-6">
-            <h3 className="text-gray-300 text-sm font-medium mb-2">Total Balance</h3>
-            <p className="text-3xl font-bold">{formatCurrency(summary.balance)}</p>
-          </div>
-          <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-6">
-            <h3 className="text-gray-300 text-sm font-medium mb-2">Total Income</h3>
-            <p className="text-3xl font-bold text-green-400">{formatCurrency(summary.income)}</p>
-          </div>
-          <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-6">
-            <h3 className="text-gray-300 text-sm font-medium mb-2">Total Expenses</h3>
-            <p className="text-3xl font-bold text-red-400">{formatCurrency(summary.expenses)}</p>
-          </div>
+          <SummaryCards transactions={transactions} loading={loading} />
         </div>
 
         {/* AI Advice */}
-        {advice && (
-          <div className="bg-gradient-to-r from-purple-600/20 to-blue-600/20 border border-purple-500/30 rounded-xl p-6 mb-8">
-            <h3 className="text-lg font-semibold mb-2">💡 AI Financial Advice</h3>
-            <p className="text-gray-200">{advice}</p>
-            <button
-              onClick={fetchAdvice}
-              className="mt-4 text-purple-300 hover:text-purple-200 text-sm font-medium"
-            >
-              Get New Advice →
-            </button>
-          </div>
-        )}
+        <div className="bg-gradient-to-r from-purple-600/20 to-blue-600/20 border border-purple-500/30 rounded-xl p-6 mb-8">
+          <h3 className="text-lg font-semibold mb-2">💡 AI Financial Advice</h3>
+          <p className="text-gray-200">{advice}</p>
+          <button
+            onClick={fetchAdvice}
+            className="mt-4 text-purple-300 hover:text-purple-200 text-sm font-medium"
+          >
+            Get New Advice →
+          </button>
+        </div>
 
         {/* Recent Transactions */}
         <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-6">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-lg font-semibold">Recent Transactions</h3>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="text-purple-300 hover:text-purple-200 text-sm font-medium"
-            >
-              Add New
-            </button>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setShowUploadModal(true)}
+                className="text-blue-300 hover:text-blue-200 text-sm font-medium"
+              >
+                Upload CSV
+              </button>
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="text-purple-300 hover:text-purple-200 text-sm font-medium"
+              >
+                Add New
+              </button>
+            </div>
           </div>
           
           <div className="overflow-x-auto">
@@ -234,6 +307,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 ))}
               </tbody>
             </table>
+            {transactions.length === 0 && (
+              <div className="text-center py-8 text-gray-400">
+                No transactions yet. Upload a bank statement or add your first transaction to get started!
+              </div>
+            )}
           </div>
         </div>
       </main>
@@ -339,6 +417,92 @@ export function Dashboard({ onLogout }: DashboardProps) {
           </div>
         </div>
       )}
+
+      {/* Upload Statement Modal */}
+      {showUploadModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800/90 backdrop-blur-xl border border-white/10 p-8 rounded-3xl shadow-2xl max-w-md w-full">
+            <h3 className="text-xl font-bold mb-6">Upload Bank Statement</h3>
+            <form onSubmit={handleFileUpload} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Bank Statement (PDF or CSV)
+                </label>
+                <div className="flex items-center justify-center w-full">
+                  <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-xl cursor-pointer bg-white/5 hover:bg-white/10 transition-colors">
+                    <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                      <svg className="w-8 h-8 mb-4 text-gray-400" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 20 16">
+                        <path stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 13h3a3 3 0 0 0 0-6h-.025A5.56 5.56 0 0 0 16 6.5 5.5 5.5 0 0 0 5.207 5.021C5.137 5.017 5.071 5 5 5a4 4 0 0 0 0 8h2.167M10 15V6m0 0L8 8m2-2 2 2"/>
+                      </svg>
+                      <p className="mb-2 text-sm text-gray-400">
+                        <span className="font-semibold">Click to upload</span> or drag and drop
+                      </p>
+                      <p className="text-xs text-gray-500">PDF or CSV (MAX. 10MB)</p>
+                    </div>
+                    <input 
+                      type="file" 
+                      className="hidden" 
+                      onChange={handleFileChange}
+                      accept=".pdf,.csv,application/pdf,text/csv"
+                    />
+                  </label>
+                </div>
+                {selectedFile && (
+                  <p className="text-sm text-green-400 mt-2">
+                    Selected: {selectedFile.name}
+                  </p>
+                )}
+              </div>
+
+              {uploadError && (
+                <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-3">
+                  <p className="text-red-300 text-sm">{uploadError}</p>
+                </div>
+              )}
+
+              {uploadSuccess && (
+                <div className="bg-green-500/20 border border-green-500/30 rounded-lg p-3">
+                  <p className="text-green-300 text-sm">{uploadSuccess}</p>
+                </div>
+              )}
+
+              <div className="flex gap-4 mt-8">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUploadModal(false)
+                    setUploadError("")
+                    setUploadSuccess("")
+                    setSelectedFile(null)
+                  }}
+                  className="flex-1 px-4 py-3 bg-gray-600 hover:bg-gray-700 rounded-xl font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploadLoading || !selectedFile}
+                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-medium transition-colors disabled:opacity-50"
+                >
+                  {uploadLoading ? "Processing..." : "Upload Statement"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {uploadSuccess && (
+  <div className="bg-green-500/20 border border-green-500/30 rounded-lg p-3">
+    <div className="flex items-center">
+      <svg className="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
+      </svg>
+      <p className="text-green-300 text-sm">{uploadSuccess}</p>
+    </div>
+    <p className="text-green-400 text-xs mt-1">Page will refresh automatically...</p>
+  </div>
+)}
     </div>
   )
 }

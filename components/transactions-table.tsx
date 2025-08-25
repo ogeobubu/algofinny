@@ -1,128 +1,66 @@
-"use client"
+import { Transaction } from "@/lib/types"
 
-import React from "react"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Button } from "@/components/ui/button"
-import { Pencil, Trash2, ArrowUpDown } from "lucide-react"
-import type { Transaction } from "@/lib/types"
-import { cn, formatCurrency } from "@/lib/utils"
+interface TransactionTableProps {
+  transactions: Transaction[]
+  onAddTransaction: () => void
+}
 
-type SortKey = "date" | "description" | "category" | "amount"
-type SortDir = "asc" | "desc"
+const formatCurrency = (amount: number) => `₦${Math.round(amount).toLocaleString()}`
 
-export function TransactionsTable({
-  data,
-  onEdit,
-  onDelete,
-}: {
-  data: Transaction[]
-  onEdit: (t: Transaction) => void
-  onDelete: (id: string) => void
-}) {
-  const [sortKey, setSortKey] = React.useState<SortKey>("date")
-  const [sortDir, setSortDir] = React.useState<SortDir>("desc")
-
-  const sorted = React.useMemo(() => {
-    const copy = [...data]
-    copy.sort((a, b) => {
-      let av: any, bv: any
-      switch (sortKey) {
-        case "date":
-          av = new Date(a.date).getTime()
-          bv = new Date(b.date).getTime()
-          break
-        case "description":
-          av = a.description.toLowerCase()
-          bv = b.description.toLowerCase()
-          break
-        case "category":
-          av = a.category.toLowerCase()
-          bv = b.category.toLowerCase()
-          break
-        case "amount":
-          av = a.amount
-          bv = b.amount
-          break
-      }
-      if (av < bv) return sortDir === "asc" ? -1 : 1
-      if (av > bv) return sortDir === "asc" ? 1 : -1
-      return 0
-    })
-    return copy
-  }, [data, sortKey, sortDir])
-
-  function header(key: SortKey, label: string) {
-    return (
-      <TableHead
-        className="cursor-pointer select-none"
-        onClick={() => {
-          if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc")
-          else {
-            setSortKey(key)
-            setSortDir("asc")
-          }
-        }}
-      >
-        <div className="inline-flex items-center gap-1">
-          <span>{label}</span>
-          <ArrowUpDown className="h-3.5 w-3.5 opacity-70" />
-        </div>
-      </TableHead>
-    )
-  }
-
+export function TransactionTable({ transactions, onAddTransaction }: TransactionTableProps) {
   return (
-    <div className="w-full overflow-x-auto">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            {header("date", "Date")}
-            {header("description", "Description")}
-            {header("category", "Category")}
-            {header("amount", "Amount (₦)")}
-            <TableHead>Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {sorted.map((item) => (
-            <TableRow key={item.id}>
-              <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
-              <TableCell>{item.description}</TableCell>
-              <TableCell>
-                <span
-                  className={cn(
-                    "rounded px-2 py-0.5 text-xs",
-                    item.type === "income"
-                      ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
-                      : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300",
-                  )}
-                >
-                  {item.category}
-                </span>
-              </TableCell>
-              <TableCell className={cn("text-right", item.type === "income" ? "text-green-600" : "text-red-500")}>
-                {formatCurrency(item.amount)}
-              </TableCell>
-              <TableCell>
-                <div className="flex gap-1">
-                  <Button variant="ghost" size="icon" aria-label="Edit" onClick={() => onEdit(item)}>
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="Delete"
-                    className="text-red-600"
-                    onClick={() => onDelete(item.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+    <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-6">
+      <div className="flex justify-between items-center mb-6">
+        <h3 className="text-lg font-semibold">Recent Transactions</h3>
+        <button
+          onClick={onAddTransaction}
+          className="text-purple-300 hover:text-purple-200 text-sm font-medium"
+        >
+          Add New
+        </button>
+      </div>
+      
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-white/10">
+              <th className="text-left py-3 px-4 text-gray-300 font-medium">Date</th>
+              <th className="text-left py-3 px-4 text-gray-300 font-medium">Description</th>
+              <th className="text-left py-3 px-4 text-gray-300 font-medium">Category</th>
+              <th className="text-right py-3 px-4 text-gray-300 font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {transactions.slice(0, 10).map((transaction) => (
+              <tr key={transaction.id} className="border-b border-white/5 hover:bg-white/5">
+                <td className="py-3 px-4 text-gray-300">
+                  {new Date(transaction.date).toLocaleDateString()}
+                </td>
+                <td className="py-3 px-4">{transaction.description}</td>
+                <td className="py-3 px-4">
+                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                    transaction.type === "income" 
+                      ? "bg-green-500/20 text-green-300" 
+                      : "bg-red-500/20 text-red-300"
+                  }`}>
+                    {transaction.category}
+                  </span>
+                </td>
+                <td className={`py-3 px-4 text-right font-medium ${
+                  transaction.type === "income" ? "text-green-400" : "text-red-400"
+                }`}>
+                  {transaction.type === "income" ? "+" : "-"}{formatCurrency(transaction.amount)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {transactions.length === 0 && (
+          <div className="text-center py-8 text-gray-400">
+            No transactions yet. Add your first transaction to get started!
+          </div>
+        )}
+      </div>
     </div>
   )
 }

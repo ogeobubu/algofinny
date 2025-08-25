@@ -1,0 +1,6 @@
+{"error":"Cannot read properties of undefined (reading 'filepath')","level":"error","message":"Error processing bank statement","timestamp":"2025-08-25 23:05:29"}
+{"error":"TypeError: Cannot read properties of undefined (reading 'filepath')","level":"warn","message":"Failed to delete uploaded file after error","timestamp":"2025-08-25 23:05:29"}
+{"error":"Cannot read properties of undefined (reading 'filepath')","level":"error","message":"Error processing bank statement","timestamp":"2025-08-25 23:12:01"}
+{"error":"TypeError: Cannot read properties of undefined (reading 'filepath')","level":"warn","message":"Failed to delete uploaded file after error","timestamp":"2025-08-25 23:12:01"}
+{"error":"Cannot read properties of undefined (reading 'filepath')","level":"error","message":"Error processing bank statement","timestamp":"2025-08-25 23:12:20"}
+{"error":"TypeError: Cannot read properties of undefined (reading 'filepath')","level":"warn","message":"Failed to delete uploaded file after error","timestamp":"2025-08-25 23:12:20"}

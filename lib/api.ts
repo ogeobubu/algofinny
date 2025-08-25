@@ -4,7 +4,7 @@ import { getAuthHeaders, getToken, setToken } from "./auth"
 import type { Transaction, AuthResponse, AIAdvice } from "./types"
 
 // Environment variables
-const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:4000"
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:4001"
 const USE_SERVER = process.env.NEXT_PUBLIC_USE_SERVER === "true"
 
 // Helper function to get the correct endpoint

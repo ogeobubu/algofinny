@@ -84,7 +84,7 @@ The system is built using a modular, service-oriented architecture:
      ```
 5. **Access the Application:**
    - Open [http://localhost:3000](http://localhost:3000) for the frontend.
-   - The backend API runs on [http://localhost:4000](http://localhost:4000).
+   - The backend API runs on [http://localhost:4001](http://localhost:4001).
 
 ## Usage Guide
 

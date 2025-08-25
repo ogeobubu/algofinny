@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
-import User from "../models/User.js"
+import User, { IUser } from "../models/User.js"
 import winston from "winston"
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret"
@@ -17,11 +17,23 @@ const logger = winston.createLogger({
   ],
 })
 
-function signToken(userId: string, email: string) {
+function signToken(userId: string, email: string): string {
   return jwt.sign({ sub: userId, email }, JWT_SECRET, { expiresIn: "7d" })
 }
 
-export async function signup(req: Request, res: Response) {
+// Define expected body shapes
+interface SignupBody {
+  name: string
+  email: string
+  password: string
+}
+
+interface LoginBody {
+  email: string
+  password: string
+}
+
+export async function signup(req: Request<unknown, unknown, SignupBody>, res: Response) {
   try {
     logger.info("Signup attempt", { body: { ...req.body, password: "[REDACTED]" } })
     
@@ -44,7 +56,7 @@ export async function signup(req: Request, res: Response) {
     }
 
     // Check if user already exists
-    const existing = await User.findOne({ email: email.toLowerCase() })
+    const existing = await User.findOne({ email: email.toLowerCase() }).exec()
     if (existing) {
       logger.warn("Signup failed: User already exists", { email })
       return res.status(409).json({ error: "User already exists" })
@@ -55,19 +67,19 @@ export async function signup(req: Request, res: Response) {
     const hashed = await bcrypt.hash(password, saltRounds)
     
     // Create user
-    const user = await User.create({ 
+    const user: IUser = await User.create({ 
       name: name.trim(), 
       email: email.toLowerCase().trim(), 
       password: hashed 
     })
     
     logger.info("User created successfully", { 
-      userId: user._id, 
+      userId: user._id.toString(), 
       email: user.email,
       name: user.name 
     })
     
-    // Generate token - fix the _id type issue
+    // Generate token
     const token = signToken(user._id.toString(), user.email)
     
     return res.status(201).json({ 
@@ -78,15 +90,16 @@ export async function signup(req: Request, res: Response) {
         email: user.email
       }
     })
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const error = err as Error & { code?: number }
     logger.error("Signup error", { 
-      error: err.message, 
-      stack: err.stack,
+      error: error.message, 
+      stack: error.stack,
       email: req.body?.email 
     })
     
     // Handle MongoDB duplicate key error
-    if (err.code === 11000) {
+    if (error.code === 11000) {
       return res.status(409).json({ error: "User already exists" })
     }
     
@@ -94,7 +107,7 @@ export async function signup(req: Request, res: Response) {
   }
 }
 
-export async function login(req: Request, res: Response) {
+export async function login(req: Request<unknown, unknown, LoginBody>, res: Response) {
   try {
     logger.info("Login attempt", { email: req.body?.email })
     
@@ -107,7 +120,7 @@ export async function login(req: Request, res: Response) {
     }
 
     // Find user
-    const user = await User.findOne({ email: email.toLowerCase() })
+    const user = await User.findOne({ email: email.toLowerCase() }).exec() as IUser | null
     if (!user) {
       logger.warn("Login failed: User not found", { email })
       return res.status(401).json({ error: "Invalid credentials" })
@@ -116,17 +129,17 @@ export async function login(req: Request, res: Response) {
     // Check password
     const isValidPassword = await bcrypt.compare(password, user.password)
     if (!isValidPassword) {
-      logger.warn("Login failed: Invalid password", { email, userId: user._id })
+      logger.warn("Login failed: Invalid password", { email, userId: user._id.toString() })
       return res.status(401).json({ error: "Invalid credentials" })
     }
 
     logger.info("User logged in successfully", { 
-      userId: user._id, 
+      userId: user._id.toString(), 
       email: user.email,
       name: user.name 
     })
     
-    // Generate token - fix the _id type issue
+    // Generate token
     const token = signToken(user._id.toString(), user.email)
     
     return res.json({ 
@@ -137,10 +150,11 @@ export async function login(req: Request, res: Response) {
         email: user.email
       }
     })
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const error = err as Error
     logger.error("Login error", { 
-      error: err.message, 
-      stack: err.stack,
+      error: error.message, 
+      stack: error.stack,
       email: req.body?.email 
     })
     return res.status(500).json({ error: "Internal server error" })

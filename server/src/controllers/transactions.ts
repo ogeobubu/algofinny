@@ -16,6 +16,24 @@ const logger = winston.createLogger({
   ],
 })
 
+function normalizeType(type?: string, legacy_type?: string): { type: "credit" | "debit", legacy_type: "income" | "expense" } {
+  if (type === "income" || legacy_type === "income") {
+    return { type: "credit", legacy_type: "income" }
+  }
+  if (type === "expense" || legacy_type === "expense") {
+    return { type: "debit", legacy_type: "expense" }
+  }
+  if (type === "credit") {
+    return { type: "credit", legacy_type: "income" }
+  }
+  if (type === "debit") {
+    return { type: "debit", legacy_type: "expense" }
+  }
+  // default
+  return { type: "debit", legacy_type: "expense" }
+}
+
+
 function getUserId(req: Request): string | null {
   const header = req.headers.authorization
   if (!header) return null
@@ -85,79 +103,54 @@ export async function createTransaction(req: Request, res: Response) {
       logger.warn("Unauthorized transaction creation request")
       return res.status(401).json({ error: "Unauthorized" })
     }
-    
-    const { 
-      amount, 
+
+    const {
+      amount,
       description,
-      category, 
-      type, 
+      category,
+      type,
       date,
       time,
       channel,
       transaction_reference,
       counterparty,
       balance_after,
-      // Legacy support
       legacy_type
     } = req.body || {}
-    
-    // Validation
+
     if (amount == null || !description) {
       return res.status(400).json({ error: "amount and description are required" })
     }
-    
-    // Determine transaction type
-    let transactionType = type
-    if (!transactionType && legacy_type) {
-      transactionType = legacy_type === "income" ? "credit" : "debit"
-    }
-    if (!transactionType) {
-      transactionType = "debit" // default to debit
-    }
-    
+
+    // Normalize type here
+    const { type: normalizedType, legacy_type: normalizedLegacy } = normalizeType(type, legacy_type)
+
     const transactionData = {
       userId,
       amount: Number(amount),
       description: description.trim(),
       category: category || "Other",
-      type: transactionType,
+      type: normalizedType,
+      legacy_type: normalizedLegacy,
       date: date ? new Date(date) : new Date(),
-      time: time || new Date().toTimeString().slice(0, 8), // HH:MM:SS
+      time: time || new Date().toTimeString().slice(0, 8),
       channel: channel || "Manual Entry",
       transaction_reference: transaction_reference || `MAN${Date.now()}${Math.random().toString(36).substr(2, 6).toUpperCase()}`,
       counterparty: counterparty || null,
       balance_after: balance_after || null
     }
-    
+
     const item = await Transaction.create(transactionData)
-    
-    logger.info("Transaction created", { 
-      userId, 
+
+    logger.info("Transaction created", {
+      userId,
       transactionId: item._id,
-      type: transactionType,
-      amount,
-      description 
-    })
-    
-    // Transform response
-    const response = {
-      id: item._id,
-      userId: item.userId,
-      date: item.date,
-      time: item.time,
-      description: item.description,
       type: item.type,
-      amount: item.amount,
-      balance_after: item.balance_after,
-      channel: item.channel,
-      transaction_reference: item.transaction_reference,
-      counterparty: item.counterparty,
-      category: item.category,
-      // Legacy compatibility
-      legacy_type: item.type === "credit" ? "income" : "expense"
-    }
-    
-    return res.status(201).json(response)
+      amount,
+      description
+    })
+
+    return res.status(201).json(item)
   } catch (err: any) {
     logger.error("Error creating transaction", { error: err.message })
     return res.status(500).json({ error: "Internal server error" })
@@ -170,29 +163,27 @@ export async function updateTransaction(req: Request, res: Response) {
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" })
     }
-    
+
     const { id } = req.params as { id: string }
-    const { 
-      amount, 
+    const {
+      amount,
       description,
-      category, 
-      type, 
+      category,
+      type,
       date,
       time,
       channel,
       transaction_reference,
       counterparty,
       balance_after,
-      // Legacy support
       legacy_type
     } = req.body || {}
-    
+
     const item = await Transaction.findOne({ _id: id, userId })
     if (!item) {
       return res.status(404).json({ error: "Transaction not found" })
     }
-    
-    // Update fields
+
     if (amount != null) item.amount = Number(amount)
     if (description) item.description = description.trim()
     if (category) item.category = category
@@ -202,45 +193,24 @@ export async function updateTransaction(req: Request, res: Response) {
     if (transaction_reference) item.transaction_reference = transaction_reference
     if (counterparty !== undefined) item.counterparty = counterparty
     if (balance_after !== undefined) item.balance_after = balance_after
-    
-    // Handle type conversion
-    if (type) {
-      item.type = type
-    } else if (legacy_type) {
-      item.type = legacy_type === "income" ? "credit" : "debit"
+
+    // Normalize type on update
+    if (type || legacy_type) {
+      const { type: normalizedType, legacy_type: normalizedLegacy } = normalizeType(type, legacy_type)
+      item.type = normalizedType
+      item.legacy_type = normalizedLegacy
     }
-    
+
     await item.save()
-    
-    logger.info("Transaction updated", { 
-      userId, 
-      transactionId: item._id 
-    })
-    
-    // Transform response
-    const response = {
-      id: item._id,
-      userId: item.userId,
-      date: item.date,
-      time: item.time,
-      description: item.description,
-      type: item.type,
-      amount: item.amount,
-      balance_after: item.balance_after,
-      channel: item.channel,
-      transaction_reference: item.transaction_reference,
-      counterparty: item.counterparty,
-      category: item.category,
-      // Legacy compatibility
-      legacy_type: item.type === "credit" ? "income" : "expense"
-    }
-    
-    return res.json(response)
+
+    logger.info("Transaction updated", { userId, transactionId: item._id })
+    return res.json(item)
   } catch (err: any) {
     logger.error("Error updating transaction", { error: err.message })
     return res.status(500).json({ error: "Internal server error" })
   }
 }
+
 
 export async function deleteTransaction(req: Request, res: Response) {
   try {

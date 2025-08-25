@@ -5,8 +5,9 @@ import winston from "winston"
 import { signup, login } from "./controllers/auth.js"
 import { listTransactions, createTransaction, updateTransaction, deleteTransaction } from "./controllers/transactions.js"
 import { getAdvice } from "./controllers/ai.js"
-import { handleBankStatementUpload } from "./controllers/bankStatement.js"
+import { handleFileUpload } from "./controllers/bankStatement.js"
 import { connectDatabase } from "./config/database.js"
+import { authenticateToken } from "./middleware/authMiddleware.js"
 
 dotenv.config()
 
@@ -21,16 +22,14 @@ app.use(cors({
 }))
 app.use(express.json())
 
-// Winston logger for all requests
+// Winston logger
 const logger = winston.createLogger({
   level: "info",
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.json()
   ),
-  transports: [
-    new winston.transports.Console(),
-  ],
+  transports: [new winston.transports.Console()],
 })
 
 app.use((req, _res, next) => {
@@ -39,43 +38,34 @@ app.use((req, _res, next) => {
 })
 
 app.get("/health", (_req, res) => res.json({ ok: true, timestamp: new Date().toISOString() }))
-
-// Bank statement upload endpoint
-app.post("/api/bank/upload", handleBankStatementUpload)
-
-// Auth routes
+app.post("/api/bank/upload", handleFileUpload)
 app.post("/api/auth/signup", signup)
 app.post("/api/auth/login", login)
+app.get("/api/transactions", authenticateToken, listTransactions)
+app.post("/api/transactions", authenticateToken, createTransaction)
+app.put("/api/transactions/:id", authenticateToken, updateTransaction)
+app.delete("/api/transactions/:id", authenticateToken, deleteTransaction)
+app.get("/api/ai/advice", authenticateToken, getAdvice)
 
-// Transaction routes
-app.get("/api/transactions", listTransactions)
-app.post("/api/transactions", createTransaction)
-app.put("/api/transactions/:id", updateTransaction)
-app.delete("/api/transactions/:id", deleteTransaction)
+const PORT = Number(process.env.PORT || 4001)
 
-// AI advice route
-app.get("/api/ai/advice", getAdvice)
-
-const PORT = Number(process.env.PORT || 4000)
+let server: import("http").Server | null = null
 
 async function start() {
   try {
-    // Connect to database
     await connectDatabase()
-    
-    app.listen(PORT, () => {
+
+    server = app.listen(PORT, () => {
       logger.info(`🚀 AlgoFinny API ready on http://localhost:${PORT}`)
       logger.info(`📱 Health check: http://localhost:${PORT}/health`)
     })
   } catch (err: any) {
     logger.error("❌ Failed to start server", { error: err.message })
-    
-    // For development, you might want to continue without MongoDB
+
     if (process.env.NODE_ENV === 'development') {
       logger.warn("🔄 Starting server without database connection...")
-      app.listen(PORT, () => {
+      server = app.listen(PORT, () => {
         logger.info(`🚀 AlgoFinny API ready on http://localhost:${PORT} (NO DATABASE)`)
-        logger.info(`📱 Health check: http://localhost:${PORT}/health`)
       })
     } else {
       process.exit(1)
@@ -83,13 +73,32 @@ async function start() {
   }
 }
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  logger.info('🔄 Shutting down gracefully...')
+async function stop() {
+  logger.info('🔄 Stopping server...')
+
+  // Close HTTP server
+  if (server) {
+    await new Promise<void>((resolve, reject) => {
+      server!.close(err => {
+        if (err) return reject(err)
+        resolve()
+      })
+    })
+    logger.info('✅ HTTP server closed')
+  }
+
+  // Close MongoDB connection
   const mongoose = await import('mongoose')
-  await mongoose.connection.close()
-  logger.info('✅ MongoDB connection closed')
+  if (mongoose.connection.readyState !== 0) {
+    await mongoose.connection.close()
+    logger.info('✅ MongoDB connection closed')
+  }
+}
+
+process.on('SIGINT', async () => {
+  await stop()
   process.exit(0)
 })
 
+export { start, stop }
 start()
