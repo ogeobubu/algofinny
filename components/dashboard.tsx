@@ -9,16 +9,35 @@ interface DashboardProps {
   onLogout: () => void
 }
 
+interface AIAdvice {
+  advice: string
+  model: string
+  transactionCount?: number
+  timestamp?: string
+}
+
+interface FileUploadResult {
+  success: boolean
+  message: string
+  processed?: {
+    total_transactions: number
+    saved_transactions: number
+    skipped_transactions: number
+  }
+}
+
 export function Dashboard({ onLogout }: DashboardProps) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
-  const [advice, setAdvice] = useState<string>("")
+  const [aiAdvice, setAiAdvice] = useState<AIAdvice | null>(null)
+  const [adviceLoading, setAdviceLoading] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [uploadLoading, setUploadLoading] = useState(false)
   const [uploadError, setUploadError] = useState("")
   const [uploadSuccess, setUploadSuccess] = useState("")
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedAiModel, setSelectedAiModel] = useState<'openai' | 'deepseek' | 'rules'>('openai')
   const [newTransaction, setNewTransaction] = useState({
     description: "",
     amount: "",
@@ -28,17 +47,12 @@ export function Dashboard({ onLogout }: DashboardProps) {
 
   useEffect(() => {
     fetchTransactions()
-    fetchAdvice()
+    fetchAIAdvice()
   }, [])
 
   const fetchTransactions = async () => {
     try {
-      const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || ""
-      const endpoint = serverUrl 
-        ? `${serverUrl}/api/transactions`
-        : "/api/transactions"
-
-      const response = await fetch(endpoint, {
+      const response = await fetch("/api/transactions", {
         headers: getAuthHeaders()
       })
 
@@ -52,35 +66,40 @@ export function Dashboard({ onLogout }: DashboardProps) {
     }
   }
 
-  const fetchAdvice = async () => {
+  const fetchAIAdvice = async (model?: string) => {
+    setAdviceLoading(true)
     try {
-      const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || ""
-      const endpoint = serverUrl 
-        ? `${serverUrl}/api/ai/advice`
-        : "/api/insights"
-
-      const response = await fetch(endpoint, {
+      const params = new URLSearchParams()
+      if (model) params.append('model', model)
+      
+      const response = await fetch(`/api/insights?${params}`, {
         headers: getAuthHeaders()
       })
 
       if (response.ok) {
         const data = await response.json()
-        setAdvice(data.advice)
+        setAiAdvice({
+          advice: data.advice,
+          model: data.model,
+          transactionCount: data.insights?.totalTransactions,
+          timestamp: data.timestamp
+        })
       }
     } catch (error) {
-      console.error("Error fetching advice:", error)
+      console.error("Error fetching AI advice:", error)
+      setAiAdvice({
+        advice: "Unable to generate advice at the moment. Please try again later.",
+        model: "error"
+      })
+    } finally {
+      setAdviceLoading(false)
     }
   }
 
   const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL || ""
-      const endpoint = serverUrl 
-        ? `${serverUrl}/api/transactions`
-        : "/api/transactions"
-
-      const response = await fetch(endpoint, {
+      const response = await fetch("/api/transactions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -97,81 +116,77 @@ export function Dashboard({ onLogout }: DashboardProps) {
       setNewTransaction({ description: "", amount: "", category: "Other", type: "expense" })
       setShowAddModal(false)
       fetchTransactions()
-      fetchAdvice()
+      fetchAIAdvice()
     } catch (error) {
       console.error("Error adding transaction:", error)
     }
   }
 
- const handleFileUpload = async (e: React.FormEvent) => {
-  e.preventDefault()
-  if (!selectedFile) {
-    setUploadError("Please select a file first")
-    return
-  }
-
-  setUploadLoading(true)
-  setUploadError("")
-  setUploadSuccess("")
-
-  try {
-    // Use the Next.js API route instead of direct Express server
-    const endpoint = "/api/bank/upload"
-
-    const formData = new FormData()
-    formData.append("statement", selectedFile)
-
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        // Include auth headers for the API route
-        ...getAuthHeaders(),
-      },
-      body: formData,
-    })
-
-    const result = await response.json()
-
-    if (!response.ok) {
-      throw new Error(result.error || result.details || "Failed to upload statement")
+  const handleFileUpload = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedFile) {
+      setUploadError("Please select a file first")
+      return
     }
 
-    // Show success message with processed transactions count
-    if (result.processed && result.processed.saved_transactions) {
-      setUploadSuccess(`✅ Successfully processed ${result.processed.saved_transactions} transactions!`)
-    } else if (result.message) {
-      setUploadSuccess(`✅ ${result.message}`)
-    } else {
-      setUploadSuccess("✅ Bank statement processed successfully!")
+    setUploadLoading(true)
+    setUploadError("")
+    setUploadSuccess("")
+
+    try {
+      const formData = new FormData()
+      formData.append("statement", selectedFile)
+
+      const response = await fetch("/api/bank/upload", {
+        method: "POST",
+        headers: {
+          ...getAuthHeaders(),
+        },
+        body: formData,
+      })
+
+      const result: FileUploadResult = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || "Failed to upload statement")
+      }
+
+      if (result.processed) {
+        setUploadSuccess(
+          `✅ Successfully processed ${result.processed.saved_transactions} transactions! ` +
+          `(${result.processed.skipped_transactions} duplicates skipped)`
+        )
+      } else {
+        setUploadSuccess(`✅ ${result.message}`)
+      }
+      
+      // Refresh data after successful upload
+      setTimeout(() => {
+        setShowUploadModal(false)
+        setSelectedFile(null)
+        setUploadError("")
+        setUploadSuccess("")
+        fetchTransactions()
+        fetchAIAdvice()
+      }, 3000)
+      
+    } catch (error) {
+      console.error("Error uploading statement:", error)
+      setUploadError(error instanceof Error ? error.message : "Failed to upload statement")
+    } finally {
+      setUploadLoading(false)
     }
-    
-    // Refresh data after successful upload
-    setTimeout(() => {
-      setShowUploadModal(false)
-      setSelectedFile(null)
-      fetchTransactions()
-      fetchAdvice()
-    }, 3000)
-    
-  } catch (error) {
-    console.error("Error uploading statement:", error)
-    setUploadError(error instanceof Error ? error.message : "Failed to upload statement")
-  } finally {
-    setUploadLoading(false)
   }
-}
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
-      // Check if file is PDF or CSV
-      const validTypes = ["application/pdf", "text/csv", "application/vnd.ms-excel"]
+      const validTypes = ["application/pdf", "text/csv", "application/vnd.ms-excel", "application/json"]
       if (!validTypes.includes(file.type)) {
-        setUploadError("Please upload a PDF or CSV file")
+        setUploadError("Please upload a PDF, CSV, or JSON file")
         return
       }
       
-      // Check file size (max 10MB)
       if (file.size > 10 * 1024 * 1024) {
         setUploadError("File size must be less than 10MB")
         return
@@ -180,6 +195,11 @@ export function Dashboard({ onLogout }: DashboardProps) {
       setSelectedFile(file)
       setUploadError("")
     }
+  }
+
+  const handleAIModelChange = (model: 'openai' | 'deepseek' | 'rules') => {
+    setSelectedAiModel(model)
+    fetchAIAdvice(model)
   }
 
   const handleLogout = () => {
@@ -240,16 +260,55 @@ export function Dashboard({ onLogout }: DashboardProps) {
           <SummaryCards transactions={transactions} loading={loading} />
         </div>
 
-        {/* AI Advice */}
+        {/* Enhanced AI Advice Section */}
         <div className="bg-gradient-to-r from-purple-600/20 to-blue-600/20 border border-purple-500/30 rounded-xl p-6 mb-8">
-          <h3 className="text-lg font-semibold mb-2">💡 AI Financial Advice</h3>
-          <p className="text-gray-200">{advice}</p>
-          <button
-            onClick={fetchAdvice}
-            className="mt-4 text-purple-300 hover:text-purple-200 text-sm font-medium"
-          >
-            Get New Advice →
-          </button>
+          <div className="flex justify-between items-start mb-4">
+            <h3 className="text-lg font-semibold flex items-center">
+              🤖 AI Financial Advisor
+              {adviceLoading && (
+                <div className="ml-2 w-4 h-4 border-2 border-purple-400/20 border-t-purple-400 rounded-full animate-spin" />
+              )}
+            </h3>
+            <div className="flex space-x-2">
+              <select
+                value={selectedAiModel}
+                onChange={(e) => handleAIModelChange(e.target.value as any)}
+                className="bg-white/10 border border-white/20 rounded-lg px-3 py-1 text-sm text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                disabled={adviceLoading}
+              >
+                <option value="openai">OpenAI GPT</option>
+                <option value="deepseek">DeepSeek AI</option>
+                <option value="rules">Quick Analysis</option>
+              </select>
+              <button
+                onClick={() => fetchAIAdvice(selectedAiModel)}
+                disabled={adviceLoading}
+                className="bg-purple-600 hover:bg-purple-700 px-3 py-1 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+          
+          <div className="bg-black/20 rounded-lg p-4 mb-4">
+            <p className="text-gray-200 leading-relaxed">
+              {aiAdvice?.advice || "Getting personalized financial advice..."}
+            </p>
+          </div>
+          
+          {aiAdvice && (
+            <div className="flex justify-between items-center text-sm text-gray-300">
+              <span>
+                Model: {aiAdvice.model} 
+                {aiAdvice.transactionCount && ` • ${aiAdvice.transactionCount} transactions analyzed`}
+              </span>
+              {aiAdvice.timestamp && (
+                <span>
+                  Updated: {new Date(aiAdvice.timestamp).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Recent Transactions */}
@@ -261,7 +320,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 onClick={() => setShowUploadModal(true)}
                 className="text-blue-300 hover:text-blue-200 text-sm font-medium"
               >
-                Upload CSV
+                Upload Statement
               </button>
               <button
                 onClick={() => setShowAddModal(true)}
@@ -291,7 +350,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                     <td className="py-3 px-4">{transaction.description}</td>
                     <td className="py-3 px-4">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                        transaction.type === "income" 
+                        transaction.type === "income" || transaction.legacy_type === "income"
                           ? "bg-green-500/20 text-green-300" 
                           : "bg-red-500/20 text-red-300"
                       }`}>
@@ -299,17 +358,35 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       </span>
                     </td>
                     <td className={`py-3 px-4 text-right font-medium ${
-                      transaction.type === "income" ? "text-green-400" : "text-red-400"
+                      transaction.type === "income" || transaction.legacy_type === "income" 
+                        ? "text-green-400" : "text-red-400"
                     }`}>
-                      {transaction.type === "income" ? "+" : "-"}{formatCurrency(transaction.amount)}
+                      {(transaction.type === "income" || transaction.legacy_type === "income") ? "+" : "-"}
+                      {formatCurrency(transaction.amount)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {transactions.length === 0 && (
-              <div className="text-center py-8 text-gray-400">
-                No transactions yet. Upload a bank statement or add your first transaction to get started!
+              <div className="text-center py-12 text-gray-400">
+                <div className="mb-4 text-4xl">📊</div>
+                <h4 className="text-lg font-medium mb-2">No transactions yet</h4>
+                <p className="text-sm mb-4">Upload a bank statement or add your first transaction to get started!</p>
+                <div className="flex justify-center space-x-4">
+                  <button
+                    onClick={() => setShowUploadModal(true)}
+                    className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Upload Statement
+                  </button>
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Add Transaction
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -347,6 +424,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   placeholder="Enter amount"
                   required
+                  min="0"
+                  step="0.01"
                 />
               </div>
               
@@ -359,12 +438,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   onChange={(e) => setNewTransaction(prev => ({ ...prev, category: e.target.value }))}
                   className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 >
-                  <option value="Food">Food</option>
-                  <option value="Transport">Transport</option>
-                  <option value="Shopping">Shopping</option>
-                  <option value="Bills">Bills</option>
-                  <option value="Entertainment">Entertainment</option>
-                  <option value="Other">Other</option>
+                  <option value="Food">🍽️ Food</option>
+                  <option value="Transport">🚗 Transport</option>
+                  <option value="Shopping">🛒 Shopping</option>
+                  <option value="Bills">💡 Bills</option>
+                  <option value="Airtime">📱 Airtime</option>
+                  <option value="Healthcare">🏥 Healthcare</option>
+                  <option value="Education">📚 Education</option>
+                  <option value="Entertainment">🎬 Entertainment</option>
+                  <option value="Other">📋 Other</option>
                 </select>
               </div>
               
@@ -380,9 +462,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       value="income"
                       checked={newTransaction.type === "income"}
                       onChange={(e) => setNewTransaction(prev => ({ ...prev, type: e.target.value as "income" | "expense" }))}
-                      className="mr-2"
+                      className="mr-2 text-green-500"
                     />
-                    Income
+                    💰 Income
                   </label>
                   <label className="flex items-center">
                     <input
@@ -391,9 +473,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       value="expense"
                       checked={newTransaction.type === "expense"}
                       onChange={(e) => setNewTransaction(prev => ({ ...prev, type: e.target.value as "income" | "expense" }))}
-                      className="mr-2"
+                      className="mr-2 text-red-500"
                     />
-                    Expense
+                    💸 Expense
                   </label>
                 </div>
               </div>
@@ -418,15 +500,26 @@ export function Dashboard({ onLogout }: DashboardProps) {
         </div>
       )}
 
-      {/* Upload Statement Modal */}
+      {/* Enhanced Upload Statement Modal */}
       {showUploadModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-slate-800/90 backdrop-blur-xl border border-white/10 p-8 rounded-3xl shadow-2xl max-w-md w-full">
             <h3 className="text-xl font-bold mb-6">Upload Bank Statement</h3>
+            
+            <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+              <h4 className="font-medium text-blue-300 mb-2">Supported Formats:</h4>
+              <ul className="text-sm text-gray-300 space-y-1">
+                <li>• PDF bank statements</li>
+                <li>• CSV transaction exports</li>
+                <li>• JSON structured data</li>
+                <li>• Max file size: 10MB</li>
+              </ul>
+            </div>
+            
             <form onSubmit={handleFileUpload} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Bank Statement (PDF or CSV)
+                  Select Bank Statement
                 </label>
                 <div className="flex items-center justify-center w-full">
                   <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-xl cursor-pointer bg-white/5 hover:bg-white/10 transition-colors">
@@ -437,26 +530,28 @@ export function Dashboard({ onLogout }: DashboardProps) {
                       <p className="mb-2 text-sm text-gray-400">
                         <span className="font-semibold">Click to upload</span> or drag and drop
                       </p>
-                      <p className="text-xs text-gray-500">PDF or CSV (MAX. 10MB)</p>
+                      <p className="text-xs text-gray-500">PDF, CSV, or JSON (MAX. 10MB)</p>
                     </div>
                     <input 
                       type="file" 
                       className="hidden" 
                       onChange={handleFileChange}
-                      accept=".pdf,.csv,application/pdf,text/csv"
+                      accept=".pdf,.csv,application/pdf,text/csv,application/json"
                     />
                   </label>
                 </div>
                 {selectedFile && (
-                  <p className="text-sm text-green-400 mt-2">
-                    Selected: {selectedFile.name}
-                  </p>
+                  <div className="mt-2 p-2 bg-green-500/10 border border-green-500/30 rounded-lg">
+                    <p className="text-sm text-green-400">
+                      ✅ Selected: {selectedFile.name} ({Math.round(selectedFile.size / 1024)}KB)
+                    </p>
+                  </div>
                 )}
               </div>
 
               {uploadError && (
                 <div className="bg-red-500/20 border border-red-500/30 rounded-lg p-3">
-                  <p className="text-red-300 text-sm">{uploadError}</p>
+                  <p className="text-red-300 text-sm">❌ {uploadError}</p>
                 </div>
               )}
 
@@ -482,27 +577,22 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 <button
                   type="submit"
                   disabled={uploadLoading || !selectedFile}
-                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-medium transition-colors disabled:opacity-50"
+                  className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {uploadLoading ? "Processing..." : "Upload Statement"}
+                  {uploadLoading ? (
+                    <span className="flex items-center justify-center">
+                      <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin mr-2" />
+                      Processing...
+                    </span>
+                  ) : (
+                    "Upload Statement"
+                  )}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-
-      {uploadSuccess && (
-  <div className="bg-green-500/20 border border-green-500/30 rounded-lg p-3">
-    <div className="flex items-center">
-      <svg className="w-5 h-5 mr-2 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path>
-      </svg>
-      <p className="text-green-300 text-sm">{uploadSuccess}</p>
-    </div>
-    <p className="text-green-400 text-xs mt-1">Page will refresh automatically...</p>
-  </div>
-)}
     </div>
   )
 }

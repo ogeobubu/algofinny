@@ -6,6 +6,7 @@ import Transaction from "../models/Transaction.js"
 import logger from "../utils/logger.js"
 import { categorizeTransaction } from "../utils/categorizer.js"
 import { parseStatementData } from "../utils/parser.js"
+import { parsePDFBuffer, isPDFParserAvailable } from "../utils/pdfParser.js"
 
 // ---- Types ---- //
 interface ParsedStatement {
@@ -98,7 +99,24 @@ export const handleFileUpload = async (req: Request, res: Response): Promise<Res
         } else if (file.originalFilename?.endsWith(".csv")) {
           return res.status(400).json({ error: "CSV parsing not yet implemented" })
         } else if (file.originalFilename?.endsWith(".pdf")) {
-          return res.status(400).json({ error: "PDF parsing not yet implemented" })
+          // Check if PDF parsing is available
+          if (!isPDFParserAvailable()) {
+            const available = await initializePDFParser()
+            if (!available) {
+              return res.status(400).json({ error: "PDF parsing is not available in this environment" })
+            }
+          }
+          
+          try {
+            const pdfText = await parsePDFBuffer(buffer)
+            // For now, return raw text until you implement PDF parsing logic
+            return res.status(400).json({ 
+              error: "PDF parsing is implemented but text extraction needs processing logic",
+              extractedText: pdfText.substring(0, 200) + "..." 
+            })
+          } catch (pdfError) {
+            return res.status(400).json({ error: "Failed to parse PDF", details: String(pdfError) })
+          }
         } else {
           return res.status(400).json({
             error: "Unsupported file format. Please upload JSON, CSV, or PDF files.",
@@ -264,5 +282,33 @@ export const handleFileUpload = async (req: Request, res: Response): Promise<Res
       error: "Internal server error",
       details: errMsg,
     })
+  }
+}
+
+// Initialize PDF parser on startup (but don't block the server)
+import('../utils/pdfParser.js').then(({ initializePDFParser }) => {
+  initializePDFParser().then(available => {
+    if (available) {
+      logger.info("PDF parser initialized successfully")
+    } else {
+      logger.warn("PDF parser not available - PDF uploads will be disabled")
+    }
+  })
+})
+async function initializePDFParser(): Promise<boolean> {
+  try {
+    // Simulate initialization logic for a PDF parser library
+    const isInitialized = await import("pdf-lib").then(() => true).catch(() => false);
+
+    if (isInitialized) {
+      logger.info("PDF parser library loaded successfully");
+      return true;
+    } else {
+      logger.warn("Failed to load PDF parser library");
+      return false;
+    }
+  } catch (error) {
+    logger.error("Error initializing PDF parser", { error: String(error) });
+    return false;
   }
 }
