@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only --es-module-loader src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "echo \"No tests specified\" && exit 0"
+    "test": "echo \"No tests specified\" && exit 0",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@langchain/community": "^0.3.50",
@@ -22,6 +23,7 @@
     "jsonwebtoken": "^9.0.2",
     "langchain": "^0.3.30",
     "mongoose": "^8.17.1",
+    "openai": "^4.67.3",
     "pdf-parse": "^1.1.1",
     "winston": "^3.17.0"
   },
@@ -34,7 +36,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.19.10",
     "@types/pdf-parse": "^1.1.5",
-    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.6.2",
     "typescript": "^5.9.2"
   }
 }

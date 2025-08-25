@@ -1,5 +1,5 @@
-import Transaction from "../models/Transaction";
-import { generateAdvice, generateOpenAIAdvice } from "../services/aiService";
+import Transaction from "../models/Transaction.js";
+import { generateAdvice, generateOpenAIAdvice } from "../services/aiService.js";
 // Returns basic or OpenAI-powered advice based on query param
 export async function getAdvice(req, res) {
     const userId = req.query.userId;

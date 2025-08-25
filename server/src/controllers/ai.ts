@@ -1,6 +1,6 @@
 import type { Request, Response } from "express"
-import Transaction from "../models/Transaction"
-import { generateAdvice, generateOpenAIAdvice } from "../services/aiService"
+import Transaction from "../models/Transaction.js"
+import { generateAdvice, generateOpenAIAdvice } from "../services/aiService.js"
 
 // Returns basic or OpenAI-powered advice based on query param
 export async function getAdvice(req: Request, res: Response) {

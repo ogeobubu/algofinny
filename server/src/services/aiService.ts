@@ -1,4 +1,4 @@
-import type { ITransaction } from "../models/Transaction"
+import type { ITransaction } from "../models/Transaction.js"
 import OpenAI from "openai"
 import winston from "winston"
 

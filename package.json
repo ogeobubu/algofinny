@@ -2,11 +2,22 @@
   "name": "algofinny",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "app",
+    "server",
+    "client"
+  ],
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd app && npm run dev",
+    "build": "npm run build:server && npm run build:client",
+    "build:server": "cd server && npm run build",
+    "build:client": "cd app && npm run build",
+    "start": "concurrently \"npm run start:server\" \"npm run start:client\"",
+    "start:server": "cd server && npm run start",
+    "start:client": "cd app && npm run start",
+    "install:all": "npm install && cd server && npm install && cd ../app && npm install && cd ../client && npm install"
   },
   "dependencies": {
     "@chakra-ui/react": "^3.24.2",
@@ -48,6 +59,7 @@
     "@types/node": "^20.19.10",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.2.0",
     "eslint": "^9",
     "eslint-config-next": "15.2.4",
     "nodemon": "^3.1.10",

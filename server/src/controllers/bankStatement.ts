@@ -125,7 +125,7 @@ function parseStatementData(data: any): { accountInfo: any; transactions: any[] 
 }
 
 // Utility: parse uploaded file
-export async function handleBankStatementUpload(req: Request, res: Response) {
+export async function handleBankStatementUpload(req: Request, res: Response): Promise<void> {
   try {
     const userId = getUserId(req)
     if (!userId) {

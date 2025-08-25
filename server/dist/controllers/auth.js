@@ -50,12 +50,12 @@ export async function signup(req, res) {
             email: user.email,
             name: user.name
         });
-        // Generate token
+        // Generate token - fix the _id type issue
         const token = signToken(user._id.toString(), user.email);
         return res.status(201).json({
             token,
             user: {
-                id: user._id,
+                id: user._id.toString(),
                 name: user.name,
                 email: user.email
             }
@@ -100,12 +100,12 @@ export async function login(req, res) {
             email: user.email,
             name: user.name
         });
-        // Generate token
+        // Generate token - fix the _id type issue
         const token = signToken(user._id.toString(), user.email);
         return res.json({
             token,
             user: {
-                id: user._id,
+                id: user._id.toString(),
                 name: user.name,
                 email: user.email
             }

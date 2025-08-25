@@ -1,12 +1,12 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import mongoose from "mongoose";
 import winston from "winston";
 import { signup, login } from "./controllers/auth.js";
 import { listTransactions, createTransaction, updateTransaction, deleteTransaction } from "./controllers/transactions.js";
 import { getAdvice } from "./controllers/ai.js";
 import { handleBankStatementUpload } from "./controllers/bankStatement.js";
+import { connectDatabase } from "./config/database.js";
 dotenv.config();
 const app = express();
 app.use(cors({
@@ -27,7 +27,7 @@ const logger = winston.createLogger({
     ],
 });
 app.use((req, _res, next) => {
-    logger.info("Request", { method: req.method, url: req.url, body: req.body });
+    logger.info("Request", { method: req.method, url: req.url });
     next();
 });
 app.get("/health", (_req, res) => res.json({ ok: true, timestamp: new Date().toISOString() }));
@@ -43,27 +43,35 @@ app.put("/api/transactions/:id", updateTransaction);
 app.delete("/api/transactions/:id", deleteTransaction);
 // AI advice route
 app.get("/api/ai/advice", getAdvice);
-const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/algofinny";
 const PORT = Number(process.env.PORT || 4000);
 async function start() {
     try {
-        logger.info("Connecting to MongoDB...", { uri: MONGO_URI.replace(/\/\/[^:]+:[^@]+@/, "//***:***@") });
-        await mongoose.connect(MONGO_URI);
-        logger.info("✅ Connected to MongoDB successfully");
-        // Test the connection
+        // Connect to database
+        await connectDatabase();
         app.listen(PORT, () => {
             logger.info(`🚀 AlgoFinny API ready on http://localhost:${PORT}`);
             logger.info(`📱 Health check: http://localhost:${PORT}/health`);
         });
     }
     catch (err) {
-        logger.error("❌ Failed to start server", { error: err });
-        process.exit(1);
+        logger.error("❌ Failed to start server", { error: err.message });
+        // For development, you might want to continue without MongoDB
+        if (process.env.NODE_ENV === 'development') {
+            logger.warn("🔄 Starting server without database connection...");
+            app.listen(PORT, () => {
+                logger.info(`🚀 AlgoFinny API ready on http://localhost:${PORT} (NO DATABASE)`);
+                logger.info(`📱 Health check: http://localhost:${PORT}/health`);
+            });
+        }
+        else {
+            process.exit(1);
+        }
     }
 }
 // Graceful shutdown
 process.on('SIGINT', async () => {
     logger.info('🔄 Shutting down gracefully...');
+    const mongoose = await import('mongoose');
     await mongoose.connection.close();
     logger.info('✅ MongoDB connection closed');
     process.exit(0);
