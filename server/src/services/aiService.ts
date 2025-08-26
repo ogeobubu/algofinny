@@ -16,65 +16,62 @@ const logger = winston.createLogger({
 // Enhanced rule-based advice for when AI is not available
 export function generateAdvice(transactions: ITransaction[]): string {
   if (!transactions.length) {
-    return "Upload a bank statement or add some transactions to get personalized financial insights!"
+    return "📌 Upload a bank statement or add transactions to get personalized financial insights!";
   }
 
-  const now = new Date()
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
-  const currentMonth = transactions.filter(t => new Date(t.date) >= startOfMonth)
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const currentMonth = transactions.filter(t => new Date(t.date) >= startOfMonth);
 
-  // Calculate key metrics
-  const totalIncome = currentMonth
-    .filter(t => t.type === "credit")
-    .reduce((sum, t) => sum + t.amount, 0)
-  
-  const totalExpenses = currentMonth
-    .filter(t => t.type === "debit")
-    .reduce((sum, t) => sum + t.amount, 0)
+  // === Calculate key metrics ===
+  const totalIncome = currentMonth.filter(t => t.type === "credit")
+                                  .reduce((sum, t) => sum + t.amount, 0);
 
-  // Category analysis
-  const categorySpending: Record<string, number> = {}
-  currentMonth
-    .filter(t => t.type === "debit")
-    .forEach(t => {
-      categorySpending[t.category] = (categorySpending[t.category] || 0) + t.amount
-    })
+  const totalExpenses = currentMonth.filter(t => t.type === "debit")
+                                   .reduce((sum, t) => sum + t.amount, 0);
+
+  const categorySpending: Record<string, number> = {};
+  currentMonth.filter(t => t.type === "debit")
+              .forEach(t => categorySpending[t.category] = (categorySpending[t.category] || 0) + t.amount);
 
   const topCategory = Object.entries(categorySpending)
-    .sort(([,a], [,b]) => b - a)[0]
+                            .sort(([,a], [,b]) => b - a)[0];
 
-  const savingsRate = totalIncome > 0 ? ((totalIncome - totalExpenses) / totalIncome) * 100 : 0
+  const savingsRate = totalIncome > 0 ? ((totalIncome - totalExpenses) / totalIncome) * 100 : 0;
 
-  // Generate contextual advice
+  // === Advice generation logic ===
+
+  // 1️⃣ No income recorded
   if (totalIncome === 0 && totalExpenses > 0) {
-    return "💡 I notice you have expenses but no recorded income this month. Consider adding your salary or other income sources for better financial tracking."
+    return "💡 You have expenses but no recorded income this month. Add your salary or other income sources for better tracking.";
   }
 
+  // 2️⃣ Low savings
   if (savingsRate < 10 && totalIncome > 0) {
-    const topSpend = topCategory ? topCategory[0] : null
-    const topAmount = topCategory ? topCategory[1] : 0
-    
-    if (topSpend && topAmount > totalIncome * 0.3) {
-      return `💰 You're spending ₦${Math.round(topAmount).toLocaleString()} on ${topSpend} (${Math.round((topAmount/totalIncome)*100)}% of income). Consider reducing this by 20% to improve your savings rate.`
+    if (topCategory && topCategory[1] > totalIncome * 0.3) {
+      return `💰 High spending alert! ₦${Math.round(topCategory[1]).toLocaleString()} spent on ${topCategory[0]} (${Math.round((topCategory[1]/totalIncome)*100)}% of income). Reduce by 20% to improve savings.`;
     }
-    
-    return `📊 Your savings rate is ${Math.round(savingsRate)}%. Try the 50/30/20 rule: 50% needs, 30% wants, 20% savings. Start by cutting one unnecessary expense.`
+    return `📊 Savings rate is low (${Math.round(savingsRate)}%). Try the 50/30/20 rule: 50% needs, 30% wants, 20% savings. Start by cutting one unnecessary expense.`;
   }
 
+  // 3️⃣ Excellent savings
   if (savingsRate >= 20) {
-    return `🎉 Excellent! You're saving ${Math.round(savingsRate)}% of your income. Consider investing in Nigerian Treasury Bills or mutual funds for better returns.`
+    return `🎉 Great job! You're saving ${Math.round(savingsRate)}% of your income. Consider investing in Nigerian Treasury Bills or mutual funds for better returns.`;
   }
 
-  if (categorySpending['Food'] > totalIncome * 0.25) {
-    return `🍽️ Food expenses are ${Math.round((categorySpending['Food']/totalIncome)*100)}% of your income. Meal prepping and cooking at home could save you ₦${Math.round(categorySpending['Food']*0.2).toLocaleString()} monthly.`
+  // 4️⃣ Specific category warnings
+  if (categorySpending['Food'] && categorySpending['Food'] > totalIncome * 0.25) {
+    return `🍽️ Food expenses are high (${Math.round((categorySpending['Food']/totalIncome)*100)}%). Meal prepping could save ₦${Math.round(categorySpending['Food']*0.2).toLocaleString()} monthly.`;
   }
 
-  if (categorySpending['Transport'] > totalIncome * 0.15) {
-    return `🚗 Transport costs are high at ₦${Math.round(categorySpending['Transport']).toLocaleString()}. Consider carpooling, using BRT, or working from home to reduce these expenses.`
+  if (categorySpending['Transport'] && categorySpending['Transport'] > totalIncome * 0.15) {
+    return `🚗 Transport costs are high (₦${Math.round(categorySpending['Transport']).toLocaleString()}). Consider carpooling, BRT, or working from home.`;
   }
 
-  return `📈 This month: Income ₦${Math.round(totalIncome).toLocaleString()}, Expenses ₦${Math.round(totalExpenses).toLocaleString()}, Savings rate ${Math.round(Math.max(0, savingsRate))}%. ${topCategory ? `Top expense: ${topCategory[0]} (₦${Math.round(topCategory[1]).toLocaleString()})` : 'Keep tracking to get better insights!'}`
+  // 5️⃣ Default summary advice
+  return `📈 This month: Income ₦${Math.round(totalIncome).toLocaleString()}, Expenses ₦${Math.round(totalExpenses).toLocaleString()}, Savings rate ${Math.round(Math.max(0, savingsRate))}%. ${topCategory ? `Top expense: ${topCategory[0]} (₦${Math.round(topCategory[1]).toLocaleString()})` : 'Keep tracking to get better insights!'}`;
 }
+
 
 // Enhanced OpenAI-powered advice with Nigerian context
 export async function generateOpenAIAdvice(transactions: ITransaction[]): Promise<string> {
@@ -184,23 +181,57 @@ Focus on practical advice for Nigerian users (food prices, transport options, lo
 }
 
 // DeepSeek integration (placeholder for when DeepSeek API is available)
+// DeepSeek integration
 export async function generateDeepseekAdvice(transactions: ITransaction[]): Promise<string> {
-  // For now, use OpenAI as DeepSeek might not have a direct API
-  // In the future, you could integrate with DeepSeek's API here
-  
-  const deepseekApiKey = process.env.DEEPSEEK_API_KEY
+  const deepseekApiKey = process.env.DEEPSEEK_API_KEY;
   if (!deepseekApiKey) {
-    logger.info("DeepSeek API not configured, using OpenAI fallback")
-    return generateOpenAIAdvice(transactions)
+    logger.info("DeepSeek API key not set, falling back to OpenAI");
+    return "DeepSeek API key not configured.";
   }
 
-  // TODO: Implement DeepSeek API integration when available
-  // For now, fallback to OpenAI
-  return generateOpenAIAdvice(transactions)
+  try {
+    const openai = new OpenAI({
+      baseURL: "https://api.deepseek.com",
+      apiKey: deepseekApiKey,
+    });
+
+    // Prepare a concise transaction summary
+    const transactionSummary = transactions
+      .map(
+        (t) =>
+          `${t.type === "credit" ? "+" : "-"}₦${t.amount.toLocaleString()} - ${t.category} - ${t.description} (${new Date(
+            t.date
+          ).toLocaleDateString()})`
+      )
+      .join("\n");
+
+    const prompt = `You are a financial advisor for Nigerian users. Analyze the following transactions and provide specific, actionable advice in under 100 words. Include naira amounts where relevant.\n\nTransactions:\n${transactionSummary}`;
+
+    const completion = await openai.chat.completions.create({
+      model: "deepseek-chat", // non-thinking mode
+      messages: [{ role: "system", content: "You are a helpful financial advisor." }, { role: "user", content: prompt }],
+      max_tokens: 150,
+      temperature: 0.7,
+    });
+
+    const advice = completion.choices[0]?.message?.content?.trim();
+    if (!advice) {
+      logger.warn("DeepSeek returned empty response");
+      return "Unable to generate advice from DeepSeek at this time.";
+    }
+
+    logger.info("DeepSeek advice generated successfully", { transactionCount: transactions.length });
+    return advice;
+  } catch (error: any) {
+    logger.error("Error generating DeepSeek advice", { error: error.message });
+    return "Failed to generate advice from DeepSeek.";
+  }
 }
+
 
 // Smart advice dispatcher - tries AI first, falls back to rules
 export async function getSmartAdvice(transactions: ITransaction[], preferredModel?: 'openai' | 'deepseek' | 'rules'): Promise<{ advice: string, model: string }> {
+  
   try {
     if (preferredModel === 'rules' || !process.env.OPENAI_API_KEY) {
       return {
