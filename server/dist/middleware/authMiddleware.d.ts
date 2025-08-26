@@ -6,6 +6,6 @@ declare global {
         }
     }
 }
-export declare const authenticateToken: (req: Request, res: Response, next: NextFunction) => Response<any, Record<string, any>> | undefined;
+export declare const authenticateToken: (req: Request, res: Response, next: NextFunction) => void | Response;
 export declare const getUserIdFromRequest: (req: Request) => string | null;
 export declare const extractUserIdFromToken: (authHeader: string | undefined) => string | null;

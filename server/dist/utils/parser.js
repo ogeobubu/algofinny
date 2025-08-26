@@ -1,205 +1,256 @@
-// Utility for parsing different bank statement formats
-export function parseStatementData(data) {
-    // Handle different input formats
-    if (data.accountInfo && data.transactions) {
-        // Already in the correct format
-        return normalizeStatement(data);
-    }
-    // Handle flat structure with account info mixed in
-    if (data.account_number && data.statement_data) {
-        return parseStructuredFormat(data);
-    }
-    // Handle array of transactions only
-    if (Array.isArray(data)) {
-        return { transactions: data.map(normalizeTransaction) };
-    }
-    // Handle nested formats from different banks
-    if (data.statement || data.transactions) {
-        return parseNestedFormat(data);
-    }
-    // Default case - try to extract what we can
-    return extractFromUnknownFormat(data);
-}
-function normalizeStatement(data) {
-    return {
-        accountInfo: data.accountInfo ? normalizeAccountInfo(data.accountInfo) : undefined,
-        transactions: data.transactions.map(normalizeTransaction)
-    };
-}
-function normalizeAccountInfo(info) {
-    return {
-        account_name: String(info.account_name || info.accountName || info.name || '').trim(),
-        account_number: String(info.account_number || info.accountNumber || info.number || '').trim(),
-        bank_name: String(info.bank_name || info.bankName || info.bank || '').trim(),
-        account_type: String(info.account_type || info.accountType || info.type || 'Savings').trim(),
-        currency: String(info.currency || 'NGN'),
-        statement_period: {
-            start_date: formatDate(info.statement_period?.start_date || info.startDate || info.from),
-            end_date: formatDate(info.statement_period?.end_date || info.endDate || info.to)
-        },
-        opening_balance: parseFloat(String(info.opening_balance || info.openingBalance || '0')),
-        closing_balance: parseFloat(String(info.closing_balance || info.closingBalance || '0')),
-        total_debits: parseFloat(String(info.total_debits || info.totalDebits || '0')),
-        total_credits: parseFloat(String(info.total_credits || info.totalCredits || '0'))
-    };
-}
-function normalizeTransaction(txn) {
-    // Handle various transaction formats
-    const amount = parseAmount(txn.amount || txn.debit || txn.credit || 0);
-    const type = determineTransactionType(txn, amount);
-    return {
-        date: formatDate(txn.date || txn.transaction_date || txn.valueDate),
-        time: txn.time || extractTimeFromDate(txn.date),
-        description: String(txn.description || txn.narration || txn.details || txn.memo || '').trim(),
-        type,
-        amount: Math.abs(amount),
-        balance_after: parseFloat(String(txn.balance_after || txn.balance || txn.runningBalance || '0')) || undefined,
-        channel: String(txn.channel || txn.source || 'Bank Statement Import').trim(),
-        transaction_reference: String(txn.transaction_reference || txn.reference || txn.ref || '').trim() || undefined,
-        counterparty: String(txn.counterparty || txn.beneficiary || txn.sender || '').trim() || undefined,
-        category: String(txn.category || '').trim() || undefined
-    };
-}
-function parseStructuredFormat(data) {
-    const accountInfo = {
-        account_name: data.account_name || 'Unknown Account',
-        account_number: data.account_number,
-        bank_name: data.bank_name || 'Unknown Bank',
-        account_type: data.account_type || 'Savings',
-        currency: data.currency || 'NGN',
-        statement_period: {
-            start_date: formatDate(data.period_start || data.from_date),
-            end_date: formatDate(data.period_end || data.to_date)
-        },
-        opening_balance: data.opening_balance,
-        closing_balance: data.closing_balance
-    };
-    const transactions = (data.statement_data || data.transactions || []).map(normalizeTransaction);
-    return { accountInfo, transactions };
-}
-function parseNestedFormat(data) {
-    const statement = data.statement || data;
-    const accountInfo = statement.account_info || statement.accountInfo;
-    const transactions = statement.transactions || data.transactions || [];
-    return {
-        accountInfo: accountInfo ? normalizeAccountInfo(accountInfo) : undefined,
-        transactions: transactions.map(normalizeTransaction)
-    };
-}
-function extractFromUnknownFormat(data) {
-    // Try to find transactions in various nested structures
-    let transactions = [];
-    const searchKeys = ['transactions', 'statement_data', 'data', 'entries', 'records', 'items'];
-    for (const key of searchKeys) {
-        if (Array.isArray(data[key])) {
-            transactions = data[key];
-            break;
+import { categorizeTransaction } from "./categorizer.js";
+import logger from "./logger.js";
+export function parseStatementData(parsedStatement) {
+    logger.info("Processing parsed statement data", {
+        bankType: parsedStatement.bankType,
+        hasAccountInfo: !!parsedStatement.accountInfo,
+        transactionCount: parsedStatement.transactions?.length || 0
+    });
+    let processedAccountInfo;
+    let processedTransactions = [];
+    // Process account information
+    if (parsedStatement.accountInfo) {
+        try {
+            processedAccountInfo = {
+                account_name: parsedStatement.accountInfo.account_name || "Unknown Account",
+                account_number: parsedStatement.accountInfo.account_number || "Unknown",
+                bank_name: parsedStatement.accountInfo.bank_name || "Unknown Bank",
+                account_type: parsedStatement.accountInfo.account_type || "Account",
+                currency: parsedStatement.accountInfo.currency || "NGN",
+                statement_period: {
+                    start_date: parsedStatement.accountInfo.statement_period?.start_date || new Date().toISOString().slice(0, 10),
+                    end_date: parsedStatement.accountInfo.statement_period?.end_date || new Date().toISOString().slice(0, 10)
+                },
+                opening_balance: parsedStatement.accountInfo.opening_balance,
+                closing_balance: parsedStatement.accountInfo.closing_balance,
+                wallet_balance: parsedStatement.accountInfo.wallet_balance,
+                total_debits: parsedStatement.accountInfo.total_debits,
+                total_credits: parsedStatement.accountInfo.total_credits
+            };
+            logger.info("Account info processed", {
+                bankName: processedAccountInfo.bank_name,
+                accountType: processedAccountInfo.account_type,
+                hasBalance: !!(processedAccountInfo.closing_balance || processedAccountInfo.wallet_balance)
+            });
+        }
+        catch (error) {
+            logger.error("Error processing account info", { error: error.message });
+            processedAccountInfo = undefined;
         }
     }
-    // If no array found, treat the whole object as potential transaction data
-    if (transactions.length === 0 && typeof data === 'object') {
-        transactions = [data];
+    // Process transactions
+    if (parsedStatement.transactions && Array.isArray(parsedStatement.transactions)) {
+        for (const txn of parsedStatement.transactions) {
+            try {
+                // Validate required fields
+                if (!txn.description || !txn.amount || !txn.date) {
+                    logger.warn("Skipping transaction with missing required fields", {
+                        hasDescription: !!txn.description,
+                        hasAmount: !!txn.amount,
+                        hasDate: !!txn.date
+                    });
+                    continue;
+                }
+                // Parse and validate amount
+                const amount = typeof txn.amount === 'string'
+                    ? parseFloat(txn.amount.replace(/[₦,]/g, ''))
+                    : Number(txn.amount);
+                if (isNaN(amount) || amount <= 0) {
+                    logger.warn("Skipping transaction with invalid amount", {
+                        originalAmount: txn.amount,
+                        parsedAmount: amount
+                    });
+                    continue;
+                }
+                // Parse date
+                let transactionDate;
+                if (txn.date instanceof Date) {
+                    transactionDate = txn.date;
+                }
+                else {
+                    transactionDate = new Date(txn.date);
+                    if (isNaN(transactionDate.getTime())) {
+                        logger.warn("Skipping transaction with invalid date", { date: txn.date });
+                        continue;
+                    }
+                }
+                // Normalize transaction type
+                const normalizedType = normalizeTransactionType(txn.type);
+                // Process description
+                const description = String(txn.description).trim();
+                if (description.length === 0) {
+                    logger.warn("Transaction has empty description, using default");
+                }
+                // Categorize transaction
+                const category = txn.category || categorizeTransaction(description);
+                // Generate transaction reference if not provided
+                const transactionReference = txn.transaction_reference ||
+                    generateTransactionReference(parsedStatement.bankType || 'traditional');
+                // Parse balance after transaction
+                let balanceAfter = null;
+                if (txn.balance_after !== null && txn.balance_after !== undefined) {
+                    const balance = typeof txn.balance_after === 'string'
+                        ? parseFloat(txn.balance_after.replace(/[₦,]/g, ''))
+                        : Number(txn.balance_after);
+                    if (!isNaN(balance)) {
+                        balanceAfter = balance;
+                    }
+                }
+                const processedTransaction = {
+                    date: transactionDate,
+                    time: txn.time || new Date().toTimeString().slice(0, 8),
+                    description: description || "Bank Transaction",
+                    type: normalizedType,
+                    amount: Math.abs(amount), // Ensure amount is positive
+                    balance_after: balanceAfter,
+                    category,
+                    transaction_reference: transactionReference,
+                    channel: txn.channel || getDefaultChannel(parsedStatement.bankType),
+                    counterparty: txn.counterparty || null
+                };
+                processedTransactions.push(processedTransaction);
+            }
+            catch (error) {
+                logger.error("Error processing transaction", {
+                    error: error.message,
+                    transaction: {
+                        description: txn.description,
+                        amount: txn.amount,
+                        date: txn.date,
+                        type: txn.type
+                    }
+                });
+            }
+        }
     }
+    // Sort transactions by date (newest first)
+    processedTransactions.sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return dateB - dateA;
+    });
+    logger.info("Statement data processing completed", {
+        accountInfoProcessed: !!processedAccountInfo,
+        transactionsProcessed: processedTransactions.length,
+        originalTransactionCount: parsedStatement.transactions?.length || 0
+    });
     return {
-        transactions: transactions.map(normalizeTransaction)
+        accountInfo: processedAccountInfo,
+        transactions: processedTransactions
     };
 }
-function parseAmount(value) {
-    if (typeof value === 'number')
-        return value;
-    if (typeof value === 'string') {
-        // Remove currency symbols and commas
-        const cleaned = value.replace(/[₦,\s]/g, '');
-        return parseFloat(cleaned) || 0;
+// Helper function to normalize transaction type
+function normalizeTransactionType(type) {
+    if (!type)
+        return "debit";
+    const typeStr = String(type).toLowerCase().trim();
+    // Handle various formats
+    if (typeStr === 'credit' || typeStr === 'cr' || typeStr === 'income') {
+        return "credit";
     }
-    return 0;
+    if (typeStr === 'debit' || typeStr === 'dr' || typeStr === 'expense') {
+        return "debit";
+    }
+    // Default to debit for unknown types
+    logger.warn("Unknown transaction type, defaulting to debit", { originalType: type });
+    return "debit";
 }
-function determineTransactionType(txn, amount) {
-    // Check explicit type field
-    if (txn.type === 'credit' || txn.type === 'debit') {
-        return txn.type;
+// Helper function to generate transaction reference
+function generateTransactionReference(bankType) {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).slice(2, 8).toUpperCase();
+    let prefix = "TXN";
+    if (bankType === "opay") {
+        prefix = "OP";
     }
-    // Check for credit/debit amount columns
-    if (txn.credit && parseFloat(String(txn.credit)) > 0)
-        return 'credit';
-    if (txn.debit && parseFloat(String(txn.debit)) > 0)
-        return 'debit';
-    // Check transaction indicators in description
-    const desc = String(txn.description || txn.narration || '').toLowerCase();
-    if (desc.includes('salary') || desc.includes('credit') || desc.includes('deposit') ||
-        desc.includes('refund') || desc.includes('reversal')) {
-        return 'credit';
+    else if (bankType === "traditional") {
+        prefix = "BNK";
     }
-    // Default based on amount sign (if negative in the data, it's likely a debit)
-    return amount < 0 ? 'debit' : 'credit';
+    return `${prefix}${timestamp}${random}`;
 }
-function formatDate(dateValue) {
-    if (!dateValue)
-        return new Date().toISOString();
-    try {
-        const date = new Date(dateValue);
-        if (isNaN(date.getTime())) {
-            // Try different date formats
-            const dateStr = String(dateValue);
-            // Handle DD/MM/YYYY or DD-MM-YYYY
-            const ddmmyyyy = dateStr.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-            if (ddmmyyyy) {
-                return new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2].padStart(2, '0')}-${ddmmyyyy[1].padStart(2, '0')}`).toISOString();
-            }
-            // Handle YYYY-MM-DD (ISO format)
-            const yyyymmdd = dateStr.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-            if (yyyymmdd) {
-                return new Date(`${yyyymmdd[1]}-${yyyymmdd[2].padStart(2, '0')}-${yyyymmdd[3].padStart(2, '0')}`).toISOString();
-            }
-            // Fallback to current date
-            return new Date().toISOString();
+// Helper function to get default channel based on bank type
+function getDefaultChannel(bankType) {
+    switch (bankType) {
+        case "opay":
+            return "OPay Mobile App";
+        case "traditional":
+            return "Bank Statement Import";
+        default:
+            return "Statement Import";
+    }
+}
+// Helper function to validate parsed statement structure
+export function validateParsedStatement(parsedStatement) {
+    if (!parsedStatement || typeof parsedStatement !== 'object') {
+        return false;
+    }
+    // Check if it has either transactions or account info
+    if (!parsedStatement.transactions && !parsedStatement.accountInfo) {
+        return false;
+    }
+    // Validate transactions array if present
+    if (parsedStatement.transactions) {
+        if (!Array.isArray(parsedStatement.transactions)) {
+            return false;
         }
-        return date.toISOString();
-    }
-    catch {
-        return new Date().toISOString();
-    }
-}
-function extractTimeFromDate(dateValue) {
-    if (!dateValue)
-        return undefined;
-    try {
-        const date = new Date(dateValue);
-        if (!isNaN(date.getTime())) {
-            return date.toTimeString().slice(0, 8);
+        // Check if transactions have required fields
+        for (const txn of parsedStatement.transactions) {
+            if (!txn.date || !txn.description || (txn.amount === null || txn.amount === undefined)) {
+                return false;
+            }
         }
     }
-    catch {
-        // ignore
+    // Validate account info if present
+    if (parsedStatement.accountInfo) {
+        if (typeof parsedStatement.accountInfo !== 'object') {
+            return false;
+        }
+        const accountInfo = parsedStatement.accountInfo;
+        if (!accountInfo.account_name || !accountInfo.bank_name) {
+            return false;
+        }
     }
-    return undefined;
+    return true;
 }
-// Helper function to validate parsed data
-export function validateParsedData(data) {
-    const errors = [];
-    if (!data.transactions || !Array.isArray(data.transactions)) {
-        errors.push('No transactions found in the data');
-    }
-    if (data.transactions && data.transactions.length === 0) {
-        errors.push('Transaction array is empty');
-    }
-    // Check for required transaction fields
-    if (data.transactions) {
-        data.transactions.forEach((txn, index) => {
-            if (!txn.date) {
-                errors.push(`Transaction ${index + 1}: Missing date`);
-            }
-            if (!txn.amount || txn.amount <= 0) {
-                errors.push(`Transaction ${index + 1}: Invalid amount`);
-            }
-            if (!txn.description || txn.description.trim() === '') {
-                errors.push(`Transaction ${index + 1}: Missing description`);
-            }
-        });
-    }
-    return {
-        isValid: errors.length === 0,
-        errors
+// Helper function to sanitize parsed data for security
+export function sanitizeParsedStatement(parsedStatement) {
+    const sanitized = {
+        bankType: parsedStatement.bankType
     };
+    // Sanitize account info
+    if (parsedStatement.accountInfo) {
+        sanitized.accountInfo = {
+            account_name: String(parsedStatement.accountInfo.account_name).trim().slice(0, 100),
+            account_number: String(parsedStatement.accountInfo.account_number).trim().slice(0, 50),
+            bank_name: String(parsedStatement.accountInfo.bank_name).trim().slice(0, 100),
+            account_type: String(parsedStatement.accountInfo.account_type).trim().slice(0, 50),
+            currency: String(parsedStatement.accountInfo.currency || 'NGN').trim().slice(0, 10),
+            statement_period: {
+                start_date: String(parsedStatement.accountInfo.statement_period?.start_date || '').trim().slice(0, 20),
+                end_date: String(parsedStatement.accountInfo.statement_period?.end_date || '').trim().slice(0, 20)
+            },
+            opening_balance: parsedStatement.accountInfo.opening_balance,
+            closing_balance: parsedStatement.accountInfo.closing_balance,
+            wallet_balance: parsedStatement.accountInfo.wallet_balance,
+            total_debits: parsedStatement.accountInfo.total_debits,
+            total_credits: parsedStatement.accountInfo.total_credits
+        };
+    }
+    // Sanitize transactions
+    if (parsedStatement.transactions) {
+        sanitized.transactions = parsedStatement.transactions.map(txn => ({
+            date: txn.date,
+            time: txn.time ? String(txn.time).trim().slice(0, 20) : undefined,
+            description: String(txn.description).trim().slice(0, 500), // Limit description length
+            type: txn.type,
+            amount: txn.amount,
+            balance_after: txn.balance_after,
+            category: txn.category ? String(txn.category).trim().slice(0, 50) : undefined,
+            transaction_reference: txn.transaction_reference ? String(txn.transaction_reference).trim().slice(0, 100) : undefined,
+            channel: txn.channel ? String(txn.channel).trim().slice(0, 100) : undefined,
+            counterparty: txn.counterparty ? String(txn.counterparty).trim().slice(0, 200) : null
+        }));
+    }
+    return sanitized;
 }
 //# sourceMappingURL=parser.js.map

@@ -14,7 +14,7 @@ export interface OpayTransaction {
     location?: string;
 }
 export interface OpayStatement {
-    accountInfo?: {
+    accountInfo: {
         account_name: string;
         account_number: string;
         bank_name: string;

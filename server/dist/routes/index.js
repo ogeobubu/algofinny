@@ -51,6 +51,7 @@ router.get('/transactions', authenticateToken, listTransactions);
 router.post('/transactions', authenticateToken, createTransaction);
 router.put('/transactions/:id', authenticateToken, updateTransaction);
 router.delete('/transactions/:id', authenticateToken, deleteTransaction);
+console.log(authenticateToken);
 // ===== AI ROUTES (auth required) =====
 router.get('/insights', authenticateToken, getInsights);
 router.get('/advice', authenticateToken, getAdvice); // Legacy route
@@ -70,11 +71,11 @@ router.get('/profile', authenticateToken, async (req, res) => {
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
-        res.json(user.toPublicJSON());
+        return res.json(user.toJSON()); // ✅ use return
     }
     catch (error) {
         console.error('Error fetching profile:', error);
-        res.status(500).json({ error: 'Failed to fetch profile' });
+        return res.status(500).json({ error: 'Failed to fetch profile' }); // ✅ use return
     }
 });
 router.put('/profile', authenticateToken, async (req, res) => {
@@ -90,11 +91,11 @@ router.put('/profile', authenticateToken, async (req, res) => {
         if (profile)
             user.profile = { ...user.profile, ...profile };
         await user.save();
-        res.json(user.toPublicJSON());
+        return res.json(user.toJSON()); // ✅ explicit return
     }
     catch (error) {
         console.error('Error updating profile:', error);
-        res.status(500).json({ error: 'Failed to update profile' });
+        return res.status(500).json({ error: 'Failed to update profile' }); // ✅ explicit return
     }
 });
 // ===== ANALYTICS ROUTES (auth required) =====

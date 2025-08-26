@@ -1,8 +1,10 @@
+// server/src/controllers/auth.ts - Fixed TypeScript errors
 import type { Request, Response } from "express"
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
-import User from "../models/User.js" // Assuming you have a User model
+import User from "../models/User.js"
 import logger from "../utils/logger.js"
+import type { SignOptions } from "jsonwebtoken"
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret"
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d"
@@ -18,18 +20,21 @@ interface SignupRequest {
   name?: string
 }
 
-// Helper function to generate JWT token with consistent structure
+const signOptions: SignOptions = {
+  expiresIn: (isNaN(Number(process.env.JWT_EXPIRES_IN))
+    ? process.env.JWT_EXPIRES_IN || "7d"
+    : Number(process.env.JWT_EXPIRES_IN)) as SignOptions["expiresIn"]
+}
+
+
 function generateToken(userId: string): string {
   return jwt.sign(
-    { 
-      userId, 
-      sub: userId,
-      iat: Math.floor(Date.now() / 1000)
-    },
+    { userId, sub: userId },
     JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
+    signOptions
   )
 }
+
 
 export async function login(req: Request, res: Response) {
   try {

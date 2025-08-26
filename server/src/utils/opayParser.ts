@@ -19,7 +19,7 @@ export interface OpayTransaction {
 }
 
 export interface OpayStatement {
-  accountInfo?: {
+  accountInfo: {
     account_name: string
     account_number: string
     bank_name: string
@@ -34,6 +34,7 @@ export interface OpayStatement {
   }
   transactions: OpayTransaction[]
 }
+
 
 // Enhanced Opay-specific categorization
 export function categorizeOpayTransaction(description: string): string {
@@ -91,7 +92,23 @@ export function categorizeOpayTransaction(description: string): string {
 }
 
 export function parseOpayPDFText(text: string): OpayStatement {
-  const result: OpayStatement = { transactions: [] }
+  const result: OpayStatement = {
+  accountInfo: {
+    account_name: "",
+    account_number: "",
+    bank_name: "Opay",
+    account_type: "Digital Wallet",
+    currency: "NGN",
+    statement_period: { start_date: "", end_date: "" },
+    opening_balance: 0,
+    closing_balance: 0,
+    wallet_balance: 0,
+    total_debits: 0,
+    total_credits: 0
+  },
+  transactions: []
+}
+
   
   try {
     logger.info("Starting Opay PDF text parsing", { textLength: text.length })

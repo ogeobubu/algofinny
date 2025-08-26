@@ -1,38 +1,47 @@
 import type { NextRequest } from "next/server"
-import { parseAuth, getTransactions } from "@/app/api/_db"
 
+const SERVER_URL = process.env.SERVER_URL || "http://localhost:4001"
+
+// Handle GET /api/insights
 export async function GET(req: NextRequest) {
-  const auth = parseAuth(req.headers.get("authorization"))
-  if (!auth) return new Response("Unauthorized", { status: 401 })
-  const all = getTransactions(auth.userId)
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), 1)
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
-  const month = all.filter((t) => {
-    const d = new Date(t.date)
-    return d >= start && d <= end
-  })
-  const byCategory: Record<string, number> = {}
-  let income = 0
-  let expenses = 0
-  month.forEach((t) => {
-    if (t.type === "expense") {
-      byCategory[t.category] = (byCategory[t.category] ?? 0) + t.amount
-      expenses += t.amount
-    } else {
-      income += t.amount
-    }
-  })
-  const top = Object.entries(byCategory).sort((a, b) => b[1] - a[1])[0]
-  const [cat, amt] = top ?? ["spending", 0]
-  const savingsRate = income > 0 ? Math.round(((income - expenses) / income) * 100) : 0
-  const tip =
-    amt > 0
-      ? `You spent ₦${Math.round(amt).toLocaleString()} on ${cat} this month. Try meal prepping to save around 10%.`
-      : "Add your expenses to get personalized savings tips."
-  const wrap = `Monthly check-in: Income ₦${Math.round(income).toLocaleString()}, Expenses ₦${Math.round(
-    expenses,
-  ).toLocaleString()}, Savings rate ~${Math.max(0, savingsRate)}%. ${tip}`
+  try {
+    const authHeader = req.headers.get("authorization") || ""
 
-  return Response.json({ advice: wrap, model: "mock-deepseek" })
+    const response = await fetch(`${SERVER_URL}/api/insights`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        authorization: authHeader,
+      },
+    })
+
+    const data = await response.json()
+    return Response.json(data, { status: response.status })
+  } catch (err) {
+    console.error("Insights proxy error:", err)
+    return Response.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
+
+// Handle POST /api/insights
+export async function POST(req: NextRequest) {
+  try {
+    const authHeader = req.headers.get("authorization") || ""
+    const body = await req.json()
+
+    const response = await fetch(`${SERVER_URL}/api/insights`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        authorization: authHeader,
+      },
+      body: JSON.stringify(body),
+    })
+
+    const data = await response.json()
+    return Response.json(data, { status: response.status })
+  } catch (err) {
+    console.error("Insights create proxy error:", err)
+    return Response.json({ error: "Internal server error" }, { status: 500 })
+  }
 }

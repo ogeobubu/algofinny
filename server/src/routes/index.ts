@@ -61,6 +61,8 @@ router.post('/transactions', authenticateToken, createTransaction)
 router.put('/transactions/:id', authenticateToken, updateTransaction)
 router.delete('/transactions/:id', authenticateToken, deleteTransaction)
 
+console.log(authenticateToken)
+
 // ===== AI ROUTES (auth required) =====
 router.get('/insights', authenticateToken, getInsights)
 router.get('/advice', authenticateToken, getAdvice) // Legacy route
@@ -80,17 +82,18 @@ router.get('/profile', authenticateToken, async (req, res) => {
   try {
     const User = (await import('../models/User.js')).default
     const user = await User.findById(req.userId).select('-password')
-    
+
     if (!user) {
       return res.status(404).json({ error: 'User not found' })
     }
-    
-    res.json(user.toPublicJSON())
+
+    return res.json(user.toJSON()) // ✅ use return
   } catch (error: any) {
     console.error('Error fetching profile:', error)
-    res.status(500).json({ error: 'Failed to fetch profile' })
+    return res.status(500).json({ error: 'Failed to fetch profile' }) // ✅ use return
   }
 })
+
 
 router.put('/profile', authenticateToken, async (req, res) => {
   try {
@@ -107,12 +110,14 @@ router.put('/profile', authenticateToken, async (req, res) => {
     
     await user.save()
     
-    res.json(user.toPublicJSON())
+    return res.json(user.toJSON()) // ✅ explicit return
   } catch (error: any) {
     console.error('Error updating profile:', error)
-    res.status(500).json({ error: 'Failed to update profile' })
+    return res.status(500).json({ error: 'Failed to update profile' }) // ✅ explicit return
   }
 })
+
+
 
 // ===== ANALYTICS ROUTES (auth required) =====
 router.get('/analytics/summary', authenticateToken, async (req, res) => {

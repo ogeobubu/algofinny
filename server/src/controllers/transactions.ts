@@ -1,3 +1,4 @@
+// server/src/controllers/transactions.ts - Fixed TypeScript errors
 import type { Request, Response } from "express"
 import Transaction from "../models/Transaction.js"
 import { getUserIdFromRequest } from "../middleware/authMiddleware.js"
@@ -60,8 +61,8 @@ export async function listTransactions(req: Request, res: Response) {
       category: item.category,
       // Legacy compatibility
       legacy_type: item.type === "credit" ? "income" : "expense",
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt
+      createdAt: (item as any).createdAt || new Date(),
+      updatedAt: (item as any).updatedAt || new Date()
     }))
     
     return res.json(transformedItems)
@@ -153,8 +154,8 @@ export async function createTransaction(req: Request, res: Response) {
       counterparty: item.counterparty,
       category: item.category,
       legacy_type: item.type === "credit" ? "income" : "expense",
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt
+      createdAt: (item as any).createdAt || new Date(),
+      updatedAt: (item as any).updatedAt || new Date()
     }
 
     return res.status(201).json(response)
@@ -247,8 +248,8 @@ export async function updateTransaction(req: Request, res: Response) {
       counterparty: item.counterparty,
       category: item.category,
       legacy_type: item.type === "credit" ? "income" : "expense",
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt
+      createdAt: (item as any).createdAt || new Date(),
+      updatedAt: (item as any).updatedAt || new Date()
     }
     
     return res.json(response)

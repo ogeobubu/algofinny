@@ -44,7 +44,22 @@ export function categorizeOpayTransaction(description) {
     return categorizeTransaction(description);
 }
 export function parseOpayPDFText(text) {
-    const result = { transactions: [] };
+    const result = {
+        accountInfo: {
+            account_name: "",
+            account_number: "",
+            bank_name: "Opay",
+            account_type: "Digital Wallet",
+            currency: "NGN",
+            statement_period: { start_date: "", end_date: "" },
+            opening_balance: 0,
+            closing_balance: 0,
+            wallet_balance: 0,
+            total_debits: 0,
+            total_credits: 0
+        },
+        transactions: []
+    };
     try {
         logger.info("Starting Opay PDF text parsing", { textLength: text.length });
         // Extract account information - Opay specific patterns

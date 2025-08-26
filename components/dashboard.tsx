@@ -261,8 +261,6 @@ export function Dashboard({ onLogout }: DashboardProps) {
           <SummaryCards transactions={transactions} loading={loading} />
         </div>
 
-        <OpayUploadGuide />
-
         {/* Enhanced AI Advice Section */}
         <div className="bg-gradient-to-r from-purple-600/20 to-blue-600/20 border border-purple-500/30 rounded-xl p-6 mb-8">
           <div className="flex justify-between items-start mb-4">
@@ -394,6 +392,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
             )}
           </div>
         </div>
+
+        <OpayUploadGuide />
       </main>
 
       {/* Add Transaction Modal */}

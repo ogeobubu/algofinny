@@ -5,44 +5,63 @@ import type { Transaction } from "@/lib/types"
 import { formatCurrency, getMonthRange } from "@/lib/utils"
 
 export function SummaryCards({ transactions, loading }: { transactions: Transaction[]; loading: boolean }) {
+  // Normalize transactions
+  const normalizedTransactions = React.useMemo(() => {
+    return (transactions || []).map((t) => {
+      const typeStr = (t.type || t.legacy_type || "").toString().toLowerCase()
+      let type: "income" | "expense" = "expense"
+
+      if (typeStr === "income" || typeStr === "credit") type = "income"
+      if (typeStr === "expense" || typeStr === "debit") type = "expense"
+
+      const amount = parseFloat(
+        (t.amount || t.value || "0").toString().replace(/[^0-9.-]+/g, "")
+      )
+
+      return {
+        ...t,
+        type,
+        amount: isNaN(amount) ? 0 : amount,
+        date: new Date(t.date || t.createdAt || Date.now()).toISOString(),
+      } as Transaction
+    })
+  }, [transactions])
+
+  // Monthly calculations
   const monthly = React.useMemo(() => {
     const { start, end } = getMonthRange(new Date())
-    
-    // Filter transactions for current month
-    const thisMonth = transactions.filter((t) => {
+
+    const thisMonth = normalizedTransactions.filter((t) => {
       const transactionDate = new Date(t.date)
       return transactionDate >= start && transactionDate <= end
     })
 
-    // Calculate income and expenses
     const income = thisMonth
       .filter((t) => t.type === "income")
       .reduce((sum, t) => sum + t.amount, 0)
-    
+
     const expenses = thisMonth
       .filter((t) => t.type === "expense")
       .reduce((sum, t) => sum + t.amount, 0)
 
-    // Calculate all-time balance
-    const balance = transactions.reduce((sum, t) => {
+    const balance = normalizedTransactions.reduce((sum, t) => {
       return t.type === "income" ? sum + t.amount : sum - t.amount
     }, 0)
 
-    // Calculate savings and progress
     const savings = income > 0 ? income - expenses : 0
     const goal = Math.max(1, Math.round(income * 0.2)) // 20% savings goal
     const progress = income > 0 ? Math.max(0, Math.min(100, Math.round((savings / goal) * 100))) : 0
 
-    return { 
-      income, 
-      expenses, 
-      balance, 
-      savings, 
-      goal, 
+    return {
+      income,
+      expenses,
+      balance,
+      savings,
+      goal,
       progress,
-      hasData: thisMonth.length > 0
+      hasData: thisMonth.length > 0,
     }
-  }, [transactions])
+  }, [normalizedTransactions])
 
   if (loading) {
     return (
@@ -136,7 +155,7 @@ export function SummaryCards({ transactions, loading }: { transactions: Transact
                 <path
                   d="M18 2 a 16 16 0 1 1 0 32 a 16 16 0 1 1 0 -32"
                   fill="none"
-                  stroke={monthly.progress >= 100 ? "#10b981" : "#8b5cf6"} // Purple to match your theme
+                  stroke={monthly.progress >= 100 ? "#10b981" : "#8b5cf6"} 
                   strokeWidth="3"
                   strokeDasharray={`${monthly.progress}, 100`}
                   strokeLinecap="round"

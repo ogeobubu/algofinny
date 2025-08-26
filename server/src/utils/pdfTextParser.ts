@@ -1,301 +1,307 @@
-// server/src/utils/pdfTextParser.ts - Enhanced version
-import logger from "./logger.js"
+// server/src/utils/pdfTextParser.ts - Enhanced with Opay support
+import { parseOpayPDFText } from "./opayPdfParser.js"
 import { categorizeTransaction } from "./categorizer.js"
-import { parseOpayPDFText, OpayStatement } from "./opayParser.js"
+import logger from "./logger.js"
+
+export interface ParsedTransaction {
+  date: Date | string
+  time?: string
+  description: string
+  type: "credit" | "debit"
+  amount: string | number | null
+  balance_after?: string | number | null
+  category?: string
+  transaction_reference?: string
+  channel?: string
+  counterparty?: string | null
+}
 
 export interface ParsedStatement {
+  bankType?: "opay" | "traditional"
   accountInfo?: {
     account_name: string
     account_number: string
     bank_name: string
     account_type: string
-    currency?: string
-    statement_period: { start_date: string; end_date: string }
+    currency: string
+    statement_period: {
+      start_date: string
+      end_date: string
+    }
+    wallet_balance?: number
     opening_balance?: number
     closing_balance?: number
     total_debits?: number
     total_credits?: number
-    wallet_balance?: number
   }
-  transactions: Array<{
-    date: string
-    time?: string
-    description?: string
-    type?: "credit" | "debit"
-    amount: number
-    balance_after?: number
-    channel?: string
-    transaction_reference?: string
-    counterparty?: string
-    category?: string
-  }>
-  bankType?: "opay" | "traditional"
+  transactions?: ParsedTransaction[]
 }
 
-export async function parsePDFTextToStructuredData(text: string): Promise<ParsedStatement> {
-  try {
-    // Detect bank type
-    const bankType = detectBankType(text)
-    
-    logger.info("Detected bank type", { bankType })
-    
-    if (bankType === "opay") {
-      // Use Opay-specific parser
-      const opayResult = parseOpayPDFText(text)
-      
-      // Convert to standard format
-      return {
-        accountInfo: opayResult.accountInfo,
-        transactions: opayResult.transactions,
-        bankType: "opay"
-      }
-    } else {
-      // Use traditional bank parser
-      const result = parseTraditionalBankStatement(text)
-      return {
-        ...result,
-        bankType: "traditional"
-      }
-    }
-  } catch (error) {
-    logger.error("Error in PDF text parsing", { error: String(error) })
-    throw error
+
+export async function parsePDFTextToStructuredData(pdfText: string): Promise<ParsedStatement> {
+  logger.info("Starting PDF text parsing", { textLength: pdfText.length })
+  
+  // Detect bank type by checking for keywords
+  const bankType = detectBankType(pdfText)
+  logger.info("Detected bank type", { bankType })
+  
+  if (bankType === "opay") {
+    return await parseOpayPDFText(pdfText)
   }
+  
+  // Parse traditional bank statements
+  return await parseTraditionalBankStatement(pdfText)
 }
 
 function detectBankType(text: string): "opay" | "traditional" {
-  const textLower = text.toLowerCase()
+  const lowerText = text.toLowerCase()
   
-  // Opay indicators
-  const opayIndicators = [
-    "opay",
-    "o-pay",
-    "digital wallet",
-    "wallet balance",
-    "mobile money",
-    "fintech",
-    "pos transaction",
-    "p2p transfer",
-    "qr payment",
-    "mobile app",
-    "wallet funding"
+  // Opay detection keywords
+  const opayKeywords = [
+    'opay', 'o-pay', 'opera pay', 'opay digital services',
+    'wallet balance', 'digital wallet', 'mobile wallet',
+    'opay nigeria', 'fintech', 'digital payment'
   ]
   
-  // Traditional bank indicators  
-  const traditionalIndicators = [
-    "first bank",
-    "access bank",
-    "gtbank",
-    "zenith bank",
-    "uba",
-    "fidelity bank",
-    "sterling bank",
-    "wema bank",
-    "union bank",
-    "current account",
-    "savings account",
-    "account statement",
-    "sort code",
-    "swift code"
+  const opayScore = opayKeywords.reduce((score, keyword) => {
+    return score + (lowerText.includes(keyword) ? 1 : 0)
+  }, 0)
+  
+  // Traditional bank keywords
+  const traditionalKeywords = [
+    'access bank', 'gtbank', 'first bank', 'zenith bank', 
+    'uba', 'fidelity bank', 'sterling bank', 'wema bank',
+    'current account', 'savings account', 'account statement',
+    'sort code', 'ifsc code'
   ]
   
-  let opayScore = 0
-  let traditionalScore = 0
+  const traditionalScore = traditionalKeywords.reduce((score, keyword) => {
+    return score + (lowerText.includes(keyword) ? 1 : 0)
+  }, 0)
   
-  // Count indicators
-  for (const indicator of opayIndicators) {
-    if (textLower.includes(indicator)) {
-      opayScore++
-    }
-  }
-  
-  for (const indicator of traditionalIndicators) {
-    if (textLower.includes(indicator)) {
-      traditionalScore++
-    }
-  }
-  
-  // Additional heuristics
-  if (textLower.includes("opay") || textLower.includes("o-pay")) {
-    opayScore += 5 // Strong indicator
-  }
-  
-  if (textLower.includes("wallet") && (textLower.includes("balance") || textLower.includes("funding"))) {
-    opayScore += 3
-  }
-  
-  // Phone number as account identifier suggests digital bank
-  if (text.match(/(?:Account|Phone).*?(?:\+234|0)[1-9]\d{9}/)) {
-    opayScore += 2
-  }
-  
-  // Traditional account number format
-  if (text.match(/\d{10,}/)) {
-    traditionalScore += 1
-  }
-  
-  logger.info("Bank type detection scores", { opayScore, traditionalScore })
+  logger.debug("Bank type detection scores", { opayScore, traditionalScore })
   
   return opayScore > traditionalScore ? "opay" : "traditional"
 }
 
-function parseTraditionalBankStatement(text: string): Omit<ParsedStatement, 'bankType'> {
-  const result: Omit<ParsedStatement, 'bankType'> = { transactions: [] }
+async function parseTraditionalBankStatement(pdfText: string): Promise<ParsedStatement> {
+  logger.info("Parsing traditional bank statement")
   
-  try {
-    // Traditional Nigerian bank patterns
-    const patterns = [
-      // Account number patterns
-      { 
-        regex: /Account\s*Number[:]?\s*([A-Z0-9-\s]+)/i, 
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.account_number = match[1].trim()
-        }
-      },
-      { 
-        regex: /Account\s*No[:]?\s*([A-Z0-9-\s]+)/i, 
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.account_number = match[1].trim()
-        }
-      },
+  const lines = pdfText.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  
+  let accountInfo = {
+    account_name: "",
+    account_number: "",
+    bank_name: "",
+    account_type: "Savings",
+    currency: "NGN",
+    statement_period: {
+      start_date: "",
+      end_date: ""
+    },
+    opening_balance: 0,
+    closing_balance: 0,
+    total_debits: 0,
+    total_credits: 0
+  }
+  
+  const transactions: any[] = []
+  
+  // Enhanced patterns for traditional banks
+  const patterns = {
+    bankName: [
+      /(Access Bank|GTBank|First Bank|Zenith Bank|UBA|Fidelity Bank|Sterling Bank|Wema Bank|Union Bank|FCMB)/i,
+      /^([A-Z\s&]+BANK[A-Z\s]*)/i
+    ],
+    
+    accountName: [
+      /(?:Account\s+Name|Name):\s*(.+?)(?:\n|$)/i,
+      /(?:Customer|Client)\s+Name:\s*(.+?)(?:\n|$)/i
+    ],
+    
+    accountNumber: [
+      /(?:Account\s+Number|A\/C\s+No):\s*(\d{10,})/i,
+      /Account:\s*(\d{10,})/i
+    ],
+    
+    dateRange: [
+      /(?:Statement\s+Period|Period|From):\s*(\d{1,2}\/\d{1,2}\/\d{4})\s*(?:to|To|-)\s*(\d{1,2}\/\d{1,2}\/\d{4})/i,
+      /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})\s*(?:to|To|-)\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4})/i
+    ],
+    
+    balance: [
+      /(?:Opening|Starting)\s+Balance:\s*₦?([\d,]+\.?\d*)/i,
+      /(?:Closing|Ending)\s+Balance:\s*₦?([\d,]+\.?\d*)/i,
+      /Balance\s+(?:B\/F|BF):\s*₦?([\d,]+\.?\d*)/i,
+      /Balance\s+(?:C\/F|CF):\s*₦?([\d,]+\.?\d*)/i
+    ],
+    
+    // Traditional bank transaction patterns
+    transactions: [
+      // Format: Date | Description | Debit | Credit | Balance
+      /^(\d{1,2}\/\d{1,2}\/\d{4})\s*\|\s*(.+?)\s*\|\s*₦?([\d,]*\.?\d*)\s*\|\s*₦?([\d,]*\.?\d*)\s*\|\s*₦?([\d,]+\.?\d*)/i,
       
-      // Account name patterns
-      { 
-        regex: /Account\s*Name[:]?\s*([A-Z\s\.]+)/i, 
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.account_name = match[1].trim()
-        }
-      },
+      // Format: Date Description Amount Dr/Cr Balance
+      /^(\d{1,2}\/\d{1,2}\/\d{4})\s+(.+?)\s+₦?([\d,]+\.?\d*)\s+(DR|CR)\s+₦?([\d,]+\.?\d*)/i,
       
-      // Bank name patterns
-      { 
-        regex: /Bank\s*Name[:]?\s*([A-Z\s]+)/i, 
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.bank_name = match[1].trim()
-        }
-      },
-      
-      // Detect bank from header or footer
-      {
-        regex: /(First Bank|Access Bank|GTBank|Zenith Bank|UBA|Fidelity Bank|Sterling Bank|Wema Bank|Union Bank)/i,
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.bank_name = match[1].trim()
-        }
-      },
-      
-      // Currency patterns
-      { 
-        regex: /Currency[:]?\s*([A-Z]{3})/i, 
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.currency = match[1].trim()
-        }
-      },
-      
-      // Statement period patterns
-      { 
-        regex: /Statement\s*Period[:]?\s*(\d{2}\/\d{2}\/\d{4})\s*to\s*(\d{2}\/\d{2}\/\d{4})/i, 
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.statement_period = {
-            start_date: match[1],
-            end_date: match[2]
-          }
-        }
-      },
-      
-      // Balance patterns
-      { 
-        regex: /Opening\s*Balance[:]?\s*([\d,]+\.\d{2})/i, 
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.opening_balance = parseFloat(match[1].replace(/,/g, ''))
-        }
-      },
-      { 
-        regex: /Closing\s*Balance[:]?\s*([\d,]+\.\d{2})/i, 
-        handler: (match: RegExpMatchArray) => {
-          result.accountInfo = result.accountInfo || {} as any
-          result.accountInfo.closing_balance = parseFloat(match[1].replace(/,/g, ''))
-        }
-      },
+      // Format: Date Description Debit Credit Balance
+      /^(\d{1,2}\/\d{1,2}\/\d{4})\s+(.+?)\s+₦?([\d,]*\.?\d*)\s+₦?([\d,]*\.?\d*)\s+₦?([\d,]+\.?\d*)/i
     ]
-
-    // Process patterns
-    for (const pattern of patterns) {
-      const match = text.match(pattern.regex)
-      if (match) {
-        pattern.handler(match)
+  }
+  
+  // Parse account information
+  for (const line of lines) {
+    // Bank name
+    for (const pattern of patterns.bankName) {
+      const match = line.match(pattern)
+      if (match && !accountInfo.bank_name) {
+        accountInfo.bank_name = match[1].trim()
+        break
       }
     }
-
-    // Transaction patterns - multiple approaches
-    const transactionPatterns = [
-      // Pattern 1: Date Description Amount
-      /(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([\d,]+\.\d{2})/g,
-      // Pattern 2: Date Description Reference Amount
-      /(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([A-Z0-9]+)\s+([\d,]+\.\d{2})/g,
-      // Pattern 3: Date Description Debit Credit Balance
-      /(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([\d,]+\.\d{2})?\s+([\d,]+\.\d{2})?\s+([\d,]+\.\d{2})/g
-    ]
-
-    for (const pattern of transactionPatterns) {
-      const matches = text.matchAll(pattern)
-      for (const match of matches) {
+    
+    // Account name
+    for (const pattern of patterns.accountName) {
+      const match = line.match(pattern)
+      if (match && !accountInfo.account_name) {
+        accountInfo.account_name = match[1].trim()
+        break
+      }
+    }
+    
+    // Account number
+    for (const pattern of patterns.accountNumber) {
+      const match = line.match(pattern)
+      if (match && !accountInfo.account_number) {
+        accountInfo.account_number = match[1].trim()
+        break
+      }
+    }
+    
+    // Date range
+    for (const pattern of patterns.dateRange) {
+      const match = line.match(pattern)
+      if (match && !accountInfo.statement_period.start_date) {
+        accountInfo.statement_period.start_date = match[1]
+        accountInfo.statement_period.end_date = match[2]
+        break
+      }
+    }
+    
+    // Balances
+    if (line.toLowerCase().includes('opening') && line.includes('₦')) {
+      const amount = line.match(/₦?([\d,]+\.?\d*)/)?.[1]
+      if (amount) accountInfo.opening_balance = parseFloat(amount.replace(/,/g, ''))
+    }
+    
+    if (line.toLowerCase().includes('closing') && line.includes('₦')) {
+      const amount = line.match(/₦?([\d,]+\.?\d*)/)?.[1]
+      if (amount) accountInfo.closing_balance = parseFloat(amount.replace(/,/g, ''))
+    }
+  }
+  
+  // Parse transactions
+  for (const line of lines) {
+    for (const pattern of patterns.transactions) {
+      const match = line.match(pattern)
+      if (match) {
         try {
-          let amount: number, type: "credit" | "debit", description: string
+          const [, date, description, ...amounts] = match
           
-          if (match.length >= 4) {
-            // Pattern 1 or 2
-            amount = parseFloat(match[match.length - 1].replace(/,/g, ''))
-            description = match[2].trim()
-            type = amount >= 0 ? "credit" : "debit"
-          } else {
-            // Pattern 3
-            const debit = match[3] ? parseFloat(match[3].replace(/,/g, '')) : 0
-            const credit = match[4] ? parseFloat(match[4].replace(/,/g, '')) : 0
-            amount = credit > 0 ? credit : -debit
-            type = credit > 0 ? "credit" : "debit"
-            description = match[2].trim()
+          let debitAmount = 0
+          let creditAmount = 0
+          let balance = 0
+          let type: "credit" | "debit" = "debit"
+          
+          // Parse amounts based on pattern
+          if (amounts.length >= 4) {
+            // Format: Date | Description | Debit | Credit | Balance
+            debitAmount = amounts[0] ? parseFloat(amounts[0].replace(/,/g, '')) : 0
+            creditAmount = amounts[1] ? parseFloat(amounts[1].replace(/,/g, '')) : 0
+            balance = parseFloat(amounts[2].replace(/,/g, ''))
+          } else if (amounts.length >= 3 && (amounts[1] === 'DR' || amounts[1] === 'CR')) {
+            // Format: Date Description Amount Dr/Cr Balance
+            const amount = parseFloat(amounts[0].replace(/,/g, ''))
+            if (amounts[1] === 'DR') {
+              debitAmount = amount
+              type = "debit"
+            } else {
+              creditAmount = amount
+              type = "credit"
+            }
+            balance = parseFloat(amounts[2].replace(/,/g, ''))
+          } else if (amounts.length >= 3) {
+            // Format: Date Description Debit Credit Balance
+            debitAmount = amounts[0] ? parseFloat(amounts[0].replace(/,/g, '')) : 0
+            creditAmount = amounts[1] ? parseFloat(amounts[1].replace(/,/g, '')) : 0
+            balance = parseFloat(amounts[2].replace(/,/g, ''))
           }
-
+          
+          const transactionAmount = creditAmount || debitAmount
+          if (transactionAmount <= 0) continue
+          
+          type = creditAmount > 0 ? "credit" : "debit"
+          
+          // Parse date
+          const [day, month, year] = date.split('/')
+          const transactionDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day))
+          
           const transaction = {
-            date: match[1],
-            description,
+            date: transactionDate,
+            description: description.trim(),
             type,
-            amount: Math.abs(amount),
-            balance_after: match[5] ? parseFloat(match[5].replace(/,/g, '')) : undefined,
-            category: categorizeTransaction(description),
-            transaction_reference: match[3] && match[3].match(/[A-Z0-9]{6,}/) ? match[3] : undefined,
+            amount: transactionAmount,
+            balance_after: balance || null,
+            category: categorizeTransaction(description.trim()),
+            transaction_reference: `TXN${Date.now()}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
             channel: "Bank Statement Import"
           }
-
-          // Basic validation to avoid false positives
-          if (transaction.amount > 0 && transaction.description.length > 3) {
-            result.transactions.push(transaction)
+          
+          transactions.push(transaction)
+          
+          // Update totals
+          if (type === "credit") {
+            accountInfo.total_credits += transactionAmount
+          } else {
+            accountInfo.total_debits += transactionAmount
           }
-        } catch (error) {
-          // Skip invalid transactions
-          continue
+          
+          break
+          
+        } catch (error: any) {
+          logger.warn("Error parsing traditional bank transaction", { 
+            line, 
+            error: error.message 
+          })
         }
       }
     }
-
-    // Set default values if not found
-    if (result.accountInfo) {
-      result.accountInfo.currency = result.accountInfo.currency || "NGN"
-      result.accountInfo.account_type = result.accountInfo.account_type || "Savings"
-    }
-
-  } catch (error) {
-    logger.error("Error parsing traditional bank statement", { error: String(error) })
-    throw error
   }
-
-  return result
+  
+  // Set fallback values
+  if (!accountInfo.bank_name) {
+    accountInfo.bank_name = "Unknown Bank"
+  }
+  
+  if (!accountInfo.account_name) {
+    accountInfo.account_name = "Bank Customer"
+  }
+  
+  if (!accountInfo.statement_period.start_date && transactions.length > 0) {
+    const dates = transactions.map(t => new Date(t.date)).sort()
+    accountInfo.statement_period.start_date = dates[0].toISOString().slice(0, 10)
+    accountInfo.statement_period.end_date = dates[dates.length - 1].toISOString().slice(0, 10)
+  }
+  
+  logger.info("Traditional bank statement parsing completed", {
+    bankName: accountInfo.bank_name,
+    accountNumber: accountInfo.account_number,
+    transactionCount: transactions.length
+  })
+  
+  return {
+    bankType: "traditional",
+    accountInfo,
+    transactions
+  }
 }

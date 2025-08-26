@@ -53,8 +53,8 @@ export async function listTransactions(req, res) {
             category: item.category,
             // Legacy compatibility
             legacy_type: item.type === "credit" ? "income" : "expense",
-            createdAt: item.createdAt,
-            updatedAt: item.updatedAt
+            createdAt: item.createdAt || new Date(),
+            updatedAt: item.updatedAt || new Date()
         }));
         return res.json(transformedItems);
     }
@@ -126,8 +126,8 @@ export async function createTransaction(req, res) {
             counterparty: item.counterparty,
             category: item.category,
             legacy_type: item.type === "credit" ? "income" : "expense",
-            createdAt: item.createdAt,
-            updatedAt: item.updatedAt
+            createdAt: item.createdAt || new Date(),
+            updatedAt: item.updatedAt || new Date()
         };
         return res.status(201).json(response);
     }
@@ -205,8 +205,8 @@ export async function updateTransaction(req, res) {
             counterparty: item.counterparty,
             category: item.category,
             legacy_type: item.type === "credit" ? "income" : "expense",
-            createdAt: item.createdAt,
-            updatedAt: item.updatedAt
+            createdAt: item.createdAt || new Date(),
+            updatedAt: item.updatedAt || new Date()
         };
         return res.json(response);
     }

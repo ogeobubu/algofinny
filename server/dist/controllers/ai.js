@@ -87,6 +87,7 @@ export async function getInsights(req, res) {
 }
 // Main advice endpoint with smart model selection
 export async function getAdvice(req, res) {
+    console.log("getAdvice called"); // Debug log
     try {
         const userId = getUserIdFromRequest(req);
         if (!userId) {

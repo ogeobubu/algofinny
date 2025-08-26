@@ -1,113 +1,269 @@
-// server/src/utils/categorizer.ts - Enhanced with Opay & Traditional Banking support
+// server/src/utils/categorizer.ts - Enhanced Nigerian context categorizer
+import logger from "./logger.js";
+// Nigerian-specific transaction categorization
+const categoryPatterns = {
+    // Food and Dining
+    Food: [
+        'restaurant', 'food', 'eating', 'kitchen', 'cafe', 'diner', 'pizza', 'burger',
+        'chicken', 'rice', 'beans', 'jollof', 'suya', 'amala', 'eba', 'fufu',
+        'mr biggs', 'chicken republic', 'kfc', 'dominos', 'sweet sensation',
+        'tantalizers', 'bukka', 'mama put', 'buka', 'canteen', 'food court'
+    ],
+    // Transportation
+    Transport: [
+        'uber', 'bolt', 'taxi', 'bus', 'keke', 'okada', 'danfo', 'molue',
+        'lagbus', 'brt', 'fuel', 'petrol', 'diesel', 'pms', 'filling station',
+        'total', 'mobil', 'oando', 'conoil', 'mrs', 'forte oil', 'aiteo',
+        'transport', 'fare', 'trip', 'ride', 'journey', 'travel', 'flight',
+        'air peace', 'arik', 'max air', 'azman air', 'overland', 'abc transport'
+    ],
+    // Shopping
+    Shopping: [
+        'shopping', 'mall', 'store', 'market', 'supermarket', 'shop',
+        'shoprite', 'spar', 'park n shop', 'ebeano', 'grand square',
+        'palms', 'ikeja city mall', 'silverbird galleria', 'jabi lake mall',
+        'clothes', 'shirt', 'shoe', 'bag', 'dress', 'fashion', 'boutique',
+        'jumia', 'konga', 'amazon', 'aliexpress', 'ebay', 'online shopping'
+    ],
+    // Bills and Utilities
+    Bills: [
+        'nepa', 'phcn', 'eko disco', 'ikeja disco', 'abuja disco', 'kano disco',
+        'electricity', 'light bill', 'power', 'prepaid', 'postpaid',
+        'water bill', 'waste management', 'lawma', 'cable tv', 'dstv', 'gotv',
+        'startimes', 'multichoice', 'internet', 'wifi', 'broadband',
+        'mtn', 'glo', 'airtel', '9mobile', 'spectranet', 'smile', 'ntel'
+    ],
+    // Airtime and Data
+    Airtime: [
+        'airtime', 'recharge', 'topup', 'credit', 'data', 'subscription',
+        'mtn', 'glo', 'airtel', '9mobile', 'etisalat', 'call credit',
+        'phone credit', 'mobile credit', 'sim card', 'line'
+    ],
+    // Healthcare
+    Healthcare: [
+        'hospital', 'clinic', 'doctor', 'medical', 'pharmacy', 'drug',
+        'medicine', 'health', 'dental', 'laboratory', 'lab test',
+        'x-ray', 'scan', 'check up', 'consultation', 'treatment',
+        'lagos university teaching hospital', 'luth', 'national hospital',
+        'medical center', 'health center', 'first aid'
+    ],
+    // Education
+    Education: [
+        'school', 'university', 'college', 'tuition', 'fee', 'education',
+        'book', 'stationery', 'pen', 'notebook', 'textbook', 'course',
+        'training', 'workshop', 'seminar', 'certification', 'exam',
+        'unilag', 'ui', 'oau', 'covenant', 'babcock', 'bells university',
+        'lead city', 'bowen', 'fountain university', 'school fees',
+        'jamb', 'waec', 'neco', 'post utme', 'admission'
+    ],
+    // Entertainment
+    Entertainment: [
+        'cinema', 'movie', 'film', 'netflix', 'showmax', 'iroko tv',
+        'music', 'spotify', 'apple music', 'audiomack', 'boomplay',
+        'club', 'bar', 'lounge', 'party', 'event', 'concert', 'show',
+        'genesis deluxe', 'silverbird', 'filmhouse', 'ozone cinemas',
+        'game', 'gaming', 'playstation', 'xbox', 'nintendo',
+        'bet', 'betting', 'sportybet', 'bet9ja', 'nairabet', '1xbet'
+    ],
+    // Money Transfer
+    Transfer: [
+        'transfer', 'send money', 'remittance', 'western union', 'moneygram',
+        'ria', 'worldremit', 'sendwave', 'remitly', 'wise', 'paypal',
+        'opay transfer', 'kuda transfer', 'gtbank transfer', 'access transfer',
+        'family', 'friend', 'relative', 'support', 'help', 'assistance'
+    ],
+    // Investment and Savings
+    Investment: [
+        'investment', 'savings', 'fixed deposit', 'treasury bill', 'bond',
+        'mutual fund', 'stock', 'shares', 'portfolio', 'dividend',
+        'piggyvest', 'cowrywise', 'bamboo', 'trove', 'risevest',
+        'stanbic ibtc', 'fbn quest', 'cardinalstone', 'pension',
+        'retirement savings', 'rsa', 'pencom'
+    ],
+    // Fees and Charges
+    Fees: [
+        'charge', 'fee', 'commission', 'service charge', 'maintenance fee',
+        'sms charge', 'stamp duty', 'vat', 'tax', 'cot', 'processing fee',
+        'transaction fee', 'transfer fee', 'withdrawal fee', 'card maintenance',
+        'annual fee', 'monthly fee', 'account maintenance'
+    ],
+    // Cash Operations
+    Cash: [
+        'atm', 'withdrawal', 'deposit', 'cash', 'teller', 'bank hall',
+        'pos', 'agent', 'cash deposit', 'cash withdrawal',
+        'quickteller', 'gtb atm', 'access atm', 'zenith atm', 'uba atm'
+    ],
+    // Government and Official
+    Government: [
+        'tax', 'firs', 'lasirs', 'paye', 'vat', 'customs', 'immigration',
+        'passport', 'visa', 'nin', 'drivers license', 'vehicle registration',
+        'court', 'fine', 'penalty', 'government', 'ministry', 'agency',
+        'lirs', 'birs', 'kirs', 'oirs', 'edirs'
+    ],
+    // Business
+    Business: [
+        'supplier', 'vendor', 'contractor', 'business', 'office', 'rent',
+        'equipment', 'materials', 'inventory', 'stock', 'wholesale',
+        'procurement', 'purchase', 'invoice', 'payment', 'contract'
+    ],
+    // Personal Care
+    'Personal Care': [
+        'salon', 'barber', 'spa', 'beauty', 'cosmetics', 'skincare',
+        'haircut', 'manicure', 'pedicure', 'massage', 'facial',
+        'perfume', 'deodorant', 'soap', 'shampoo', 'lotion'
+    ],
+    // Charitable/Religious
+    Charity: [
+        'church', 'mosque', 'temple', 'tithe', 'offering', 'donation',
+        'charity', 'zakat', 'sadaqah', 'religious', 'pastor', 'imam',
+        'priest', 'collection', 'contribution', 'giving', 'welfare'
+    ]
+};
+// Special Opay transaction patterns
+const opayPatterns = {
+    'Money Transfer': [
+        'transfer to', 'send money', 'money sent', 'p2p transfer',
+        'wallet to wallet', 'opay to opay', 'user transfer'
+    ],
+    'Bill Payment': [
+        'bill payment', 'pay bills', 'electricity payment', 'cable tv payment',
+        'internet payment', 'water bill payment', 'waste payment'
+    ],
+    'Airtime': [
+        'airtime purchase', 'buy airtime', 'recharge', 'topup airtime',
+        'mobile recharge', 'phone credit'
+    ],
+    'Data': [
+        'data purchase', 'buy data', 'data subscription', 'internet data',
+        'mobile data', 'data bundle'
+    ],
+    'Cashback': [
+        'cashback', 'reward', 'bonus', 'incentive', 'promotion',
+        'refund', 'reversal'
+    ],
+    'Merchant Payment': [
+        'pay merchant', 'pos payment', 'qr payment', 'merchant transaction',
+        'store payment', 'shop payment'
+    ],
+    'Bank Transfer': [
+        'transfer to bank', 'bank transfer', 'withdraw to bank',
+        'opay to bank', 'send to bank account'
+    ],
+    'Fund Wallet': [
+        'fund wallet', 'add money', 'top up wallet', 'deposit',
+        'wallet funding', 'account funding'
+    ]
+};
 export function categorizeTransaction(description) {
-    if (!description)
-        return "Other";
-    const desc = description.toLowerCase().trim();
-    // ================== OPay-specific patterns ==================
-    if (desc.includes('opay wallet') || desc.includes('wallet topup') || desc.includes('wallet funding') ||
-        desc.includes('wallet transfer') || desc.includes('fund wallet')) {
-        return "Wallet Funding";
+    if (!description || typeof description !== 'string') {
+        return 'Other';
     }
-    if (desc.includes('opay pos') || desc.includes('pos transaction') || desc.includes('pos withdrawal') ||
-        desc.includes('pos payment') || desc.includes('agent pos')) {
-        return "POS Transaction";
+    const lowerDesc = description.toLowerCase().trim();
+    // First check for Opay-specific patterns
+    for (const [category, patterns] of Object.entries(opayPatterns)) {
+        for (const pattern of patterns) {
+            if (lowerDesc.includes(pattern.toLowerCase())) {
+                logger.debug('Categorized Opay transaction', { description, category });
+                return category;
+            }
+        }
     }
-    if (desc.includes('opay transfer') || desc.includes('p2p transfer') || desc.includes('send money') ||
-        desc.includes('receive money') || desc.includes('money transfer') || desc.includes('peer to peer')) {
-        return "Money Transfer";
+    // Then check general patterns
+    for (const [category, patterns] of Object.entries(categoryPatterns)) {
+        for (const pattern of patterns) {
+            if (lowerDesc.includes(pattern.toLowerCase())) {
+                logger.debug('Categorized transaction', { description, category });
+                return category;
+            }
+        }
     }
-    if (desc.includes('opay bill') || desc.includes('bill payment') || desc.includes('utility payment') ||
-        desc.includes('pay bills') || desc.includes('electricity bill') || desc.includes('water bill')) {
-        return "Bill Payment";
+    // Special handling for common Nigerian transaction patterns
+    if (lowerDesc.includes('reversal') || lowerDesc.includes('refund')) {
+        return 'Refund';
     }
-    if (desc.includes('opay airtime') || desc.includes('airtime purchase') || desc.includes('data purchase') ||
-        desc.includes('buy airtime') || desc.includes('buy data') || desc.includes('mobile recharge')) {
-        return "Airtime/Data";
+    if (lowerDesc.includes('salary') || lowerDesc.includes('wage') || lowerDesc.includes('payment')) {
+        return 'Income';
     }
-    if (desc.includes('opay merchant') || desc.includes('merchant payment') || desc.includes('qr payment') ||
-        desc.includes('scan to pay') || desc.includes('qr code') || desc.includes('merchant pos')) {
-        return "Merchant Payment";
+    if (lowerDesc.includes('loan') || lowerDesc.includes('credit facility')) {
+        return 'Loan';
     }
-    if (desc.includes('opay savings') || desc.includes('ajo savings') || desc.includes('target savings') ||
-        desc.includes('savings plan') || desc.includes('auto save') || desc.includes('opay save')) {
-        return "Savings";
+    if (lowerDesc.includes('insurance') || lowerDesc.includes('policy')) {
+        return 'Insurance';
     }
-    if (desc.includes('opay loan') || desc.includes('loan disbursement') || desc.includes('loan repayment') ||
-        desc.includes('okash') || desc.includes('quick loan') || desc.includes('micro loan')) {
-        return "Loan";
+    if (lowerDesc.includes('rent') || lowerDesc.includes('accommodation')) {
+        return 'Housing';
     }
-    if (desc.includes('opay investment') || desc.includes('investment return') || desc.includes('mutual fund') ||
-        desc.includes('investment plan') || desc.includes('wealth management')) {
-        return "Investment";
+    // Default category
+    logger.debug('Transaction categorized as Other', { description });
+    return 'Other';
+}
+// Function to get category color for UI (optional)
+export function getCategoryColor(category) {
+    const colors = {
+        'Food': '#FF6B6B',
+        'Transport': '#4ECDC4',
+        'Shopping': '#45B7D1',
+        'Bills': '#96CEB4',
+        'Airtime': '#FFEAA7',
+        'Healthcare': '#DDA0DD',
+        'Education': '#98D8C8',
+        'Entertainment': '#F7DC6F',
+        'Transfer': '#BB8FCE',
+        'Investment': '#85C1E9',
+        'Fees': '#F1948A',
+        'Cash': '#82E0AA',
+        'Government': '#AED6F1',
+        'Business': '#F9E79F',
+        'Personal Care': '#D7BDE2',
+        'Charity': '#A9DFBF',
+        'Money Transfer': '#BB8FCE',
+        'Bill Payment': '#96CEB4',
+        'Data': '#FDEAA7',
+        'Cashback': '#A9DFBF',
+        'Merchant Payment': '#85C1E9',
+        'Bank Transfer': '#AED6F1',
+        'Fund Wallet': '#82E0AA',
+        'Refund': '#A9DFBF',
+        'Income': '#82E0AA',
+        'Loan': '#F1948A',
+        'Insurance': '#D7BDE2',
+        'Housing': '#98D8C8',
+        'Other': '#BDC3C7'
+    };
+    return colors[category] || colors['Other'];
+}
+// Function to get all available categories
+export function getAvailableCategories() {
+    const generalCategories = Object.keys(categoryPatterns);
+    const opayCategories = Object.keys(opayPatterns);
+    const specialCategories = ['Refund', 'Income', 'Loan', 'Insurance', 'Housing', 'Other'];
+    return [...new Set([...generalCategories, ...opayCategories, ...specialCategories])].sort();
+}
+// Function to suggest category based on amount and type (for manual entry)
+export function suggestCategory(description, amount, type) {
+    const baseCategory = categorizeTransaction(description);
+    const suggestions = [baseCategory];
+    // Add contextual suggestions based on transaction type and amount
+    if (type === 'credit') {
+        if (amount > 50000) {
+            suggestions.push('Income', 'Investment', 'Loan');
+        }
+        else if (amount < 1000) {
+            suggestions.push('Cashback', 'Refund', 'Airtime');
+        }
     }
-    if (desc.includes('cashback') || desc.includes('reward') || desc.includes('bonus') ||
-        desc.includes('referral bonus') || desc.includes('loyalty points') || desc.includes('promo')) {
-        return "Rewards";
+    else {
+        if (amount > 100000) {
+            suggestions.push('Investment', 'Housing', 'Business');
+        }
+        else if (amount > 20000) {
+            suggestions.push('Shopping', 'Bills', 'Healthcare');
+        }
+        else if (amount < 2000) {
+            suggestions.push('Airtime', 'Transport', 'Food');
+        }
     }
-    if (desc.includes('refund') || desc.includes('reversal') || desc.includes('failed transaction') ||
-        desc.includes('cancelled') || desc.includes('reversed') || desc.includes('chargeback')) {
-        return "Refund/Reversal";
-    }
-    // ================== Traditional banking patterns ==================
-    if (desc.includes('salary') || desc.includes('wage') || desc.includes('payment received') ||
-        desc.includes('allowance') || desc.includes('stipend') || desc.includes('payroll')) {
-        return "Salary/Income";
-    }
-    if (desc.includes('atm withdrawal') || desc.includes('cash withdrawal') || desc.includes('atm cash') ||
-        desc.includes('atm dispense') || desc.includes('debit card withdrawal')) {
-        return "ATM Withdrawal";
-    }
-    if (desc.includes('bank transfer') || desc.includes('neft') || desc.includes('rtgs') ||
-        desc.includes('imps') || desc.includes('intrabank') || desc.includes('interbank')) {
-        return "Bank Transfer";
-    }
-    if (desc.includes('debit card') || desc.includes('credit card') || desc.includes('card payment') ||
-        desc.includes('pos debit') || desc.includes('online purchase') || desc.includes('card transaction')) {
-        return "Card Payment";
-    }
-    if (desc.includes('loan repayment') || desc.includes('emi') || desc.includes('debt payment') ||
-        desc.includes('mortgage') || desc.includes('instalment')) {
-        return "Loan Repayment";
-    }
-    if (desc.includes('school fee') || desc.includes('tuition') || desc.includes('exam fee') ||
-        desc.includes('education payment')) {
-        return "Education";
-    }
-    if (desc.includes('hospital') || desc.includes('clinic') || desc.includes('pharmacy') ||
-        desc.includes('medical') || desc.includes('health')) {
-        return "Healthcare";
-    }
-    if (desc.includes('supermarket') || desc.includes('grocery') || desc.includes('store purchase') ||
-        desc.includes('mall') || desc.includes('shopping')) {
-        return "Shopping";
-    }
-    if (desc.includes('restaurant') || desc.includes('food') || desc.includes('cafe') ||
-        desc.includes('bar') || desc.includes('eatery') || desc.includes('meal')) {
-        return "Food & Drinks";
-    }
-    if (desc.includes('transport') || desc.includes('fuel') || desc.includes('bus') ||
-        desc.includes('taxi') || desc.includes('ride') || desc.includes('transportation') || desc.includes('car')) {
-        return "Transport";
-    }
-    if (desc.includes('rent') || desc.includes('lease') || desc.includes('accommodation') ||
-        desc.includes('housing')) {
-        return "Rent/Housing";
-    }
-    if (desc.includes('entertainment') || desc.includes('movie') || desc.includes('cinema') ||
-        desc.includes('concert') || desc.includes('event') || desc.includes('game')) {
-        return "Entertainment";
-    }
-    if (desc.includes('travel') || desc.includes('airline') || desc.includes('ticket') ||
-        desc.includes('hotel') || desc.includes('booking') || desc.includes('flight')) {
-        return "Travel";
-    }
-    if (desc.includes('insurance') || desc.includes('premium') || desc.includes('policy')) {
-        return "Insurance";
-    }
-    if (desc.includes('tax') || desc.includes('levy') || desc.includes('government charge')) {
-        return "Tax";
-    }
-    // ================== Default fallback ==================
-    return "Other";
+    // Remove duplicates and return top 3 suggestions
+    return [...new Set(suggestions)].slice(0, 3);
 }
 //# sourceMappingURL=categorizer.js.map
