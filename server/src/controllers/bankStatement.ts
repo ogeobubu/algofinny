@@ -1,48 +1,36 @@
 import { Request, Response } from "express"
 import formidable, { File } from "formidable"
 import fs from "fs/promises"
+import path from "path"
 import AccountInfo from "../models/AccountInfo.js"
 import Transaction from "../models/Transaction.js"
 import logger from "../utils/logger.js"
 import { categorizeTransaction } from "../utils/categorizer.js"
 import { parseStatementData } from "../utils/parser.js"
-import { parsePDFBuffer, isPDFParserAvailable } from "../utils/pdfParser.js"
+import { parsePDFBuffer, isPDFParserAvailable, initializePDFParser, isPDFBuffer } from "../utils/pdfParser.js"
+import { parsePDFTextToStructuredData, ParsedStatement } from "../utils/pdfTextParser.js"
 
-// ---- Types ---- //
-interface ParsedStatement {
-  accountInfo?: {
-    account_name: string
-    account_number: string
-    bank_name: string
-    account_type: string
-    currency?: string
-    statement_period: { start_date: string; end_date: string }
-    opening_balance?: number
-    closing_balance?: number
-    total_debits?: number
-    total_credits?: number
+// Create uploads directory on startup
+async function ensureUploadsDirectory() {
+  const uploadsDir = path.join(process.cwd(), 'uploads')
+  try {
+    await fs.access(uploadsDir)
+  } catch {
+    await fs.mkdir(uploadsDir, { recursive: true })
+    logger.info("Created uploads directory")
   }
-  transactions: Array<{
-    date: string
-    time?: string
-    description?: string
-    type?: "credit" | "debit"
-    amount: number
-    balance_after?: number
-    channel?: string
-    transaction_reference?: string
-    counterparty?: string
-    category?: string
-  }>
 }
+
+// Initialize on startup
+ensureUploadsDirectory().catch(error => {
+  logger.error("Failed to create uploads directory", { error: String(error) })
+})
 
 export const handleFileUpload = async (req: Request, res: Response): Promise<Response | void> => {
   try {
-    // Create uploads directory if it doesn't exist
-    try {
-      await fs.access('./uploads')
-    } catch {
-      await fs.mkdir('./uploads', { recursive: true })
+    const userId = (req as any).userId
+    if (!userId) {
+      return res.status(401).json({ error: "User not authenticated" })
     }
 
     // Parse the form with formidable
@@ -52,16 +40,18 @@ export const handleFileUpload = async (req: Request, res: Response): Promise<Res
       uploadDir: './uploads',
       keepExtensions: true,
       filename: (name, ext) => {
-        return `statement_${Date.now()}${ext}`
+        return `statement_${Date.now()}_${userId}${ext}`
       }
     })
 
     // Parse the form
     form.parse(req, async (err, fields, files) => {
       if (err) {
-        logger.error("Form parsing error:", err)
+        logger.error("Form parsing error:", { error: err.message, userId })
         return res.status(400).json({ error: "Failed to parse form data", details: err.message })
       }
+
+      let filePath: string | null = null
 
       try {
         const file = files.statement?.[0] as File | undefined
@@ -69,163 +59,264 @@ export const handleFileUpload = async (req: Request, res: Response): Promise<Res
           return res.status(400).json({ error: "No file uploaded" })
         }
 
-        const userId = (req as any).userId
-        if (!userId) {
-          return res.status(401).json({ error: "User not authenticated" })
-        }
-
-        const filePath = file.filepath
+        filePath = file.filepath
         if (!filePath) {
           return res.status(400).json({ error: "Uploaded file is missing path" })
         }
 
         const buffer = await fs.readFile(filePath)
+        const originalFilename = file.originalFilename || 'unknown'
 
         logger.info("Processing bank statement", {
           userId,
-          filename: file.originalFilename,
+          filename: originalFilename,
           size: file.size,
         })
 
         let parsedData: ParsedStatement
 
         // ---- Handle file formats ---- //
-        if (file.originalFilename?.endsWith(".json")) {
+        if (originalFilename.toLowerCase().endsWith(".json")) {
           try {
             parsedData = JSON.parse(buffer.toString("utf8")) as ParsedStatement
+            logger.info("JSON file parsed successfully", { userId, transactions: parsedData.transactions?.length })
           } catch (parseError) {
             return res.status(400).json({ error: "Invalid JSON file format" })
           }
-        } else if (file.originalFilename?.endsWith(".csv")) {
-          return res.status(400).json({ error: "CSV parsing not yet implemented" })
-        } else if (file.originalFilename?.endsWith(".pdf")) {
-          // Check if PDF parsing is available
+        } else if (originalFilename.toLowerCase().endsWith(".csv")) {
+          return res.status(400).json({ 
+            error: "CSV parsing not yet implemented",
+            suggestion: "Please upload a JSON or PDF file"
+          })
+        } else if (originalFilename.toLowerCase().endsWith(".pdf")) {
+          // Check if this is actually a PDF file
+          if (!isPDFBuffer(buffer)) {
+            return res.status(400).json({ 
+              error: "Invalid PDF file",
+              details: "The uploaded file doesn't appear to be a valid PDF"
+            })
+          }
+
+          // Initialize PDF parser if not already available
           if (!isPDFParserAvailable()) {
+            logger.info("PDF parser not available, attempting initialization...", { userId })
             const available = await initializePDFParser()
+            
             if (!available) {
-              return res.status(400).json({ error: "PDF parsing is not available in this environment" })
+              // Create a sample JSON template for the user
+              const sampleTemplate = {
+                accountInfo: {
+                  account_name: "Your Account Name",
+                  account_number: "Your Account Number",
+                  bank_name: "Your Bank Name",
+                  account_type: "Savings",
+                  currency: "NGN",
+                  statement_period: {
+                    start_date: "2024-01-01",
+                    end_date: "2024-01-31"
+                  }
+                },
+                transactions: [
+                  {
+                    date: "2024-01-15",
+                    description: "Sample Transaction",
+                    type: "debit",
+                    amount: 5000.00,
+                    category: "Shopping"
+                  }
+                ]
+              }
+
+              return res.status(400).json({ 
+                error: "PDF parsing is temporarily unavailable",
+                details: "We're working on fixing PDF support. In the meantime:",
+                alternatives: [
+                  "Upload your statement as JSON using the template below",
+                  "Use manual transaction entry",
+                  "Contact support for assistance"
+                ],
+                jsonTemplate: sampleTemplate,
+                supportContact: "support@algofinny.com"
+              })
             }
           }
-          
+
           try {
             const pdfText = await parsePDFBuffer(buffer)
-            // For now, return raw text until you implement PDF parsing logic
-            return res.status(400).json({ 
-              error: "PDF parsing is implemented but text extraction needs processing logic",
-              extractedText: pdfText.substring(0, 200) + "..." 
+            
+            if (!pdfText || pdfText.trim().length < 50) {
+              logger.warn("PDF text extraction returned little or no content", {
+                userId,
+                textLength: pdfText?.length
+              })
+              
+              return res.status(400).json({ 
+                error: "Could not extract text from PDF",
+                details: "The PDF might be scanned or image-based. Please try:",
+                suggestions: [
+                  "Use a text-based PDF (not scanned)",
+                  "Upload as JSON instead",
+                  "Use manual transaction entry"
+                ]
+              })
+            }
+
+            parsedData = await parsePDFTextToStructuredData(pdfText)
+            
+            logger.info("PDF parsed successfully", {
+              userId,
+              transactionsFound: parsedData.transactions?.length || 0,
+              hasAccountInfo: !!parsedData.accountInfo,
+              textLength: pdfText.length
             })
-          } catch (pdfError) {
-            return res.status(400).json({ error: "Failed to parse PDF", details: String(pdfError) })
+
+          } catch (pdfError: any) {
+            logger.error("PDF parsing failed", {
+              error: pdfError.message,
+              userId,
+              stack: pdfError.stack
+            })
+            
+            return res.status(400).json({ 
+              error: "Failed to parse PDF bank statement",
+              details: "The PDF format may not be supported or the file might be corrupted.",
+              suggestion: "Please try uploading a JSON file or use manual entry",
+              support: "Contact support@algofinny.com for help with specific bank formats"
+            })
           }
         } else {
           return res.status(400).json({
-            error: "Unsupported file format. Please upload JSON, CSV, or PDF files.",
+            error: "Unsupported file format",
+            supportedFormats: ["JSON (.json)", "PDF (.pdf)"],
+            received: originalFilename
           })
         }
 
+        console.log(parsedData)
+
         // ---- Parse structured data ---- //
         const { accountInfo, transactions } = parseStatementData(parsedData)
+
+        // Validate we have at least some data
+        if ((!transactions || transactions.length === 0) && !accountInfo) {
+          return res.status(400).json({
+            error: "No usable data found in file",
+            details: "The file doesn't contain recognizable transaction or account data",
+            suggestion: "Please check the file format and try again"
+          })
+        }
 
         let savedTransactions = 0
         let updatedAccountInfo = null
 
         // ---- Save account info ---- //
         if (accountInfo) {
-          const accountData = {
-            userId,
-            account_name: accountInfo.account_name,
-            account_number: accountInfo.account_number,
-            bank_name: accountInfo.bank_name,
-            account_type: accountInfo.account_type,
-            currency: accountInfo.currency ?? "NGN",
-            statement_period: {
-              start_date: new Date(accountInfo.statement_period.start_date),
-              end_date: new Date(accountInfo.statement_period.end_date),
-            },
-            opening_balance: accountInfo.opening_balance ?? 0,
-            closing_balance: accountInfo.closing_balance ?? 0,
-            total_debits: accountInfo.total_debits ?? 0,
-            total_credits: accountInfo.total_credits ?? 0,
-            last_updated: new Date(),
+          try {
+            const accountData = {
+              userId,
+              account_name: accountInfo.account_name,
+              account_number: accountInfo.account_number,
+              bank_name: accountInfo.bank_name,
+              account_type: accountInfo.account_type,
+              currency: accountInfo.currency ?? "NGN",
+              statement_period: {
+                start_date: new Date(accountInfo.statement_period.start_date),
+                end_date: new Date(accountInfo.statement_period.end_date),
+              },
+              opening_balance: accountInfo.opening_balance ?? 0,
+              closing_balance: accountInfo.closing_balance ?? 0,
+              total_debits: accountInfo.total_debits ?? 0,
+              total_credits: accountInfo.total_credits ?? 0,
+              last_updated: new Date(),
+            }
+
+            updatedAccountInfo = await AccountInfo.findOneAndUpdate(
+              { userId },
+              accountData,
+              { upsert: true, new: true, runValidators: true }
+            )
+
+            logger.info("Account info saved", {
+              userId,
+              accountNumber: accountInfo.account_number,
+            })
+          } catch (accountError: any) {
+            logger.error("Failed to save account info", {
+              error: accountError.message,
+              userId,
+              accountInfo
+            })
           }
-
-          updatedAccountInfo = await AccountInfo.findOneAndUpdate(
-            { userId },
-            accountData,
-            { upsert: true, new: true }
-          )
-
-          logger.info("Account info saved", {
-            userId,
-            accountNumber: accountInfo.account_number,
-          })
         }
 
         // ---- Save transactions ---- //
-        for (const txn of transactions) {
-          try {
-            // Skip duplicates
-            if (txn.transaction_reference) {
+        if (transactions && transactions.length > 0) {
+          for (const txn of transactions) {
+            try {
+              // Skip duplicates based on reference or similar transactions
               const existing = await Transaction.findOne({
                 userId,
-                transaction_reference: txn.transaction_reference,
+                $or: [
+                  { transaction_reference: txn.transaction_reference },
+                  { 
+                    date: new Date(txn.date), 
+                    amount: Math.abs(Number(txn.amount)),
+                    description: txn.description
+                  }
+                ]
               })
+
               if (existing) {
                 logger.debug("Skipping duplicate transaction", {
+                  userId,
                   reference: txn.transaction_reference,
                 })
                 continue
               }
-            }
 
-            const transactionData = {
-              userId,
-              date: new Date(txn.date),
-              time: txn.time ?? new Date().toTimeString().slice(0, 8),
-              description: txn.description ?? "Bank Statement Transaction",
-              type:
-                txn.type === "credit" || txn.type === "debit"
-                  ? txn.type
-                  : txn.amount > 0
-                  ? "credit"
-                  : "debit",
-              amount: Math.abs(Number(txn.amount)),
-              balance_after: txn.balance_after ?? null,
-              channel: txn.channel ?? "Bank Statement Import",
-              transaction_reference:
-                txn.transaction_reference ??
-                `IMP${Date.now()}${Math.random()
-                  .toString(36)
-                  .slice(2, 8)
-                  .toUpperCase()}`,
-              counterparty: txn.counterparty ?? null,
-              category: txn.category ?? categorizeTransaction(txn.description ?? ""),
-            }
+              const transactionData = {
+                userId,
+                date: new Date(txn.date),
+                time: txn.time ?? new Date().toTimeString().slice(0, 8),
+                description: txn.description ?? "Bank Statement Transaction",
+                type: txn.type === "credit" ? "credit" : "debit",
+                amount: Math.abs(Number(txn.amount)),
+                balance_after: txn.balance_after ?? null,
+                channel: txn.channel ?? "Bank Statement Import",
+                transaction_reference: txn.transaction_reference ?? 
+                  `IMP${Date.now()}${Math.random().toString(36).slice(2, 9).toUpperCase()}`,
+                counterparty: txn.counterparty ?? null,
+                category: txn.category ?? categorizeTransaction(txn.description ?? ""),
+              }
 
-            await Transaction.create(transactionData)
-            savedTransactions++
-          } catch (txnError: unknown) {
-            const errMsg =
-              txnError instanceof Error ? txnError.message : String(txnError)
-            logger.warn("Failed to save transaction", {
-              error: errMsg,
-              transaction: txn,
-            })
+              await Transaction.create(transactionData)
+              savedTransactions++
+
+            } catch (txnError: any) {
+              logger.warn("Failed to save transaction", {
+                error: txnError.message,
+                userId,
+                transaction: txn,
+              })
+            }
           }
         }
 
         // ---- Clean up ---- //
         try {
-          await fs.unlink(filePath)
-        } catch (unlinkError: unknown) {
+          if (filePath) {
+            await fs.unlink(filePath)
+          }
+        } catch (unlinkError: any) {
           logger.warn("Failed to delete uploaded file", {
-            error: String(unlinkError),
+            error: unlinkError.message,
+            filePath
           })
         }
 
         logger.info("Bank statement processing completed", {
           userId,
-          totalTransactions: transactions.length,
+          totalTransactions: transactions?.length || 0,
           savedTransactions,
           hasAccountInfo: !!accountInfo,
         })
@@ -236,79 +327,87 @@ export const handleFileUpload = async (req: Request, res: Response): Promise<Res
           filename: file.originalFilename,
           size: file.size,
           processed: {
-            total_transactions: transactions.length,
+            total_transactions: transactions?.length || 0,
             saved_transactions: savedTransactions,
-            skipped_transactions: transactions.length - savedTransactions,
+            skipped_transactions: (transactions?.length || 0) - savedTransactions,
             account_info_updated: !!updatedAccountInfo,
           },
+          ...(savedTransactions === 0 && {
+            warning: "No new transactions were saved (may be duplicates or no transactions found)"
+          })
         })
 
-      } catch (processingError: unknown) {
-        const errMsg =
-          processingError instanceof Error
-            ? processingError.message
-            : String(processingError)
-
+      } catch (processingError: any) {
         logger.error("Error processing bank statement", {
-          error: errMsg,
+          error: processingError.message,
+          stack: processingError.stack,
+          userId
         })
 
         // Clean up uploaded file if it exists
-        const file = files.statement?.[0] as File | undefined
-        if (file?.filepath) {
+        if (filePath) {
           try {
-            await fs.unlink(file.filepath)
+            await fs.unlink(filePath)
           } catch (unlinkError) {
             logger.warn("Failed to delete uploaded file after error", {
               error: String(unlinkError),
+              filePath
             })
           }
         }
 
         return res.status(500).json({
           error: "Failed to process bank statement",
-          details: errMsg,
+          details: "An internal error occurred. Please try again or contact support.",
+          support: "support@algofinny.com"
         })
       }
     })
 
-  } catch (error: unknown) {
-    const errMsg = error instanceof Error ? error.message : String(error)
+  } catch (error: any) {
     logger.error("Unexpected error in handleFileUpload", {
-      error: errMsg,
+      error: error.message,
+      stack: error.stack
     })
 
     return res.status(500).json({
       error: "Internal server error",
-      details: errMsg,
+      details: "Please try again later"
     })
   }
 }
 
-// Initialize PDF parser on startup (but don't block the server)
-import('../utils/pdfParser.js').then(({ initializePDFParser }) => {
-  initializePDFParser().then(available => {
-    if (available) {
-      logger.info("PDF parser initialized successfully")
-    } else {
-      logger.warn("PDF parser not available - PDF uploads will be disabled")
+// Initialize PDF parser on startup with retry
+async function initializePDFParserWithRetry(retries = 3, delay = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const available = await initializePDFParser()
+      if (available) {
+        logger.info("PDF parser initialized successfully on attempt " + (i + 1))
+        return true
+      }
+    } catch (error) {
+      logger.warn(`PDF parser initialization failed on attempt ${i + 1}`, {
+        error: String(error)
+      })
     }
-  })
-})
-async function initializePDFParser(): Promise<boolean> {
-  try {
-    // Simulate initialization logic for a PDF parser library
-    const isInitialized = await import("pdf-lib").then(() => true).catch(() => false);
-
-    if (isInitialized) {
-      logger.info("PDF parser library loaded successfully");
-      return true;
-    } else {
-      logger.warn("Failed to load PDF parser library");
-      return false;
+    
+    if (i < retries - 1) {
+      await new Promise(resolve => setTimeout(resolve, delay))
     }
-  } catch (error) {
-    logger.error("Error initializing PDF parser", { error: String(error) });
-    return false;
   }
+  
+  logger.warn("PDF parser initialization failed after all retries")
+  return false
 }
+
+// Initialize on startup
+initializePDFParserWithRetry().then(available => {
+  if (available) {
+    logger.info("PDF parser ready for use")
+  } else {
+    logger.warn("PDF parser unavailable - users will need to use JSON uploads")
+  }
+}).catch(error => {
+  logger.error("Failed to initialize PDF parser", { error: String(error) })
+})

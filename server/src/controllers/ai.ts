@@ -1,45 +1,16 @@
 import type { Request, Response } from "express"
-import jwt from "jsonwebtoken"
 import Transaction from "../models/Transaction.js"
 import { generateAdvice, generateOpenAIAdvice, generateDeepseekAdvice, getSmartAdvice } from "../services/aiService.js"
-import winston from "winston"
-
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret"
-
-const logger = winston.createLogger({
-  level: "info",
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console(),
-  ],
-})
-
-// Helper to get user ID from JWT token
-function getUserId(req: Request): string | null {
-  const authHeader = req.headers.authorization
-  if (!authHeader) return null
-  
-  const [bearer, token] = authHeader.split(' ')
-  if (bearer !== 'Bearer' || !token) return null
-  
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as any
-    return payload.sub || payload.userId
-  } catch (error: any) {
-    logger.warn("Invalid JWT token", { error: error.message })
-    return null
-  }
-}
+import { getUserIdFromRequest } from "../middleware/authMiddleware.js"
+import logger from "../utils/logger.js"
 
 // Endpoint to get financial insights and metrics
 export async function getInsights(req: Request, res: Response) {
   try {
-    const userId = getUserId(req)
+    const userId = getUserIdFromRequest(req)
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" })
+      logger.warn("Unauthorized insights request - no userId in request")
+      return res.status(401).json({ error: "Unauthorized - authentication required" })
     }
 
     const transactions = await Transaction.find({ userId }).sort({ date: -1 })
@@ -47,6 +18,7 @@ export async function getInsights(req: Request, res: Response) {
     if (!transactions.length) {
       return res.json({ 
         advice: "Add transactions to get personalized insights",
+        model: "no-data",
         insights: {
           totalTransactions: 0,
           monthlyIncome: 0,
@@ -117,7 +89,10 @@ export async function getInsights(req: Request, res: Response) {
     })
 
   } catch (error: any) {
-    logger.error("Error in getInsights", { error: error.message })
+    logger.error("Error in getInsights", { 
+      error: error.message,
+      stack: error.stack
+    })
     return res.status(500).json({ 
       error: "Failed to generate insights",
       details: error.message
@@ -128,10 +103,10 @@ export async function getInsights(req: Request, res: Response) {
 // Main advice endpoint with smart model selection
 export async function getAdvice(req: Request, res: Response) {
   try {
-    const userId = getUserId(req)
+    const userId = getUserIdFromRequest(req)
     if (!userId) {
-      logger.warn("Unauthorized advice request")
-      return res.status(401).json({ error: "Unauthorized - valid token required" })
+      logger.warn("Unauthorized advice request - no userId in request")
+      return res.status(401).json({ error: "Unauthorized - authentication required" })
     }
 
     // Get model preference from query params
@@ -201,7 +176,10 @@ export async function getAdvice(req: Request, res: Response) {
     })
 
   } catch (error: any) {
-    logger.error("Error in getAdvice", { error: error.message, stack: error.stack })
+    logger.error("Error in getAdvice", { 
+      error: error.message, 
+      stack: error.stack 
+    })
     return res.status(500).json({ 
       error: "Failed to generate financial advice",
       details: error.message
@@ -212,9 +190,9 @@ export async function getAdvice(req: Request, res: Response) {
 // Endpoint for comparing different AI models
 export async function compareAdvice(req: Request, res: Response) {
   try {
-    const userId = getUserId(req)
+    const userId = getUserIdFromRequest(req)
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" })
+      return res.status(401).json({ error: "Unauthorized - authentication required" })
     }
 
     const transactions = await Transaction.find({ userId }).sort({ date: -1 }).limit(50)

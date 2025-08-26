@@ -1,20 +1,7 @@
 import type { Request, Response } from "express"
-import jwt from "jsonwebtoken"
 import Transaction from "../models/Transaction.js"
-import winston from "winston"
-
-const JWT_SECRET = process.env.JWT_SECRET || "dev-secret"
-
-const logger = winston.createLogger({
-  level: "info",
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console(),
-  ],
-})
+import { getUserIdFromRequest } from "../middleware/authMiddleware.js"
+import logger from "../utils/logger.js"
 
 function normalizeType(type?: string, legacy_type?: string): { type: "credit" | "debit", legacy_type: "income" | "expense" } {
   if (type === "income" || legacy_type === "income") {
@@ -33,26 +20,12 @@ function normalizeType(type?: string, legacy_type?: string): { type: "credit" | 
   return { type: "debit", legacy_type: "expense" }
 }
 
-
-function getUserId(req: Request): string | null {
-  const header = req.headers.authorization
-  if (!header) return null
-  const [, token] = header.split(" ")
-  if (!token) return null
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as any
-    return payload.sub as string
-  } catch {
-    return null
-  }
-}
-
 export async function listTransactions(req: Request, res: Response) {
   try {
-    const userId = getUserId(req)
+    const userId = getUserIdFromRequest(req)
     if (!userId) {
-      logger.warn("Unauthorized transaction list request")
-      return res.status(401).json({ error: "Unauthorized" })
+      logger.warn("Unauthorized transaction list request - no userId in request")
+      return res.status(401).json({ error: "Unauthorized - authentication required" })
     }
     
     const page = parseInt(req.query.page as string) || 1
@@ -86,22 +59,27 @@ export async function listTransactions(req: Request, res: Response) {
       counterparty: item.counterparty,
       category: item.category,
       // Legacy compatibility
-      legacy_type: item.type === "credit" ? "income" : "expense"
+      legacy_type: item.type === "credit" ? "income" : "expense",
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt
     }))
     
     return res.json(transformedItems)
   } catch (err: any) {
-    logger.error("Error fetching transactions", { error: err.message })
+    logger.error("Error fetching transactions", { 
+      error: err.message,
+      stack: err.stack 
+    })
     return res.status(500).json({ error: "Internal server error" })
   }
 }
 
 export async function createTransaction(req: Request, res: Response) {
   try {
-    const userId = getUserId(req)
+    const userId = getUserIdFromRequest(req)
     if (!userId) {
-      logger.warn("Unauthorized transaction creation request")
-      return res.status(401).json({ error: "Unauthorized" })
+      logger.warn("Unauthorized transaction creation request - no userId in request")
+      return res.status(401).json({ error: "Unauthorized - authentication required" })
     }
 
     const {
@@ -118,8 +96,18 @@ export async function createTransaction(req: Request, res: Response) {
       legacy_type
     } = req.body || {}
 
+    // Validate required fields
     if (amount == null || !description) {
-      return res.status(400).json({ error: "amount and description are required" })
+      logger.warn("Transaction creation missing required fields", { 
+        userId,
+        hasAmount: amount != null,
+        hasDescription: !!description
+      })
+      return res.status(400).json({ 
+        error: "Missing required fields",
+        required: ["amount", "description"],
+        received: Object.keys(req.body)
+      })
     }
 
     // Normalize type here
@@ -147,24 +135,61 @@ export async function createTransaction(req: Request, res: Response) {
       transactionId: item._id,
       type: item.type,
       amount,
-      description
+      description: description.substring(0, 50) + (description.length > 50 ? "..." : "")
     })
 
-    return res.status(201).json(item)
+    // Return transformed response
+    const response = {
+      id: item._id,
+      userId: item.userId,
+      date: item.date,
+      time: item.time,
+      description: item.description,
+      type: item.type,
+      amount: item.amount,
+      balance_after: item.balance_after,
+      channel: item.channel,
+      transaction_reference: item.transaction_reference,
+      counterparty: item.counterparty,
+      category: item.category,
+      legacy_type: item.type === "credit" ? "income" : "expense",
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt
+    }
+
+    return res.status(201).json(response)
   } catch (err: any) {
-    logger.error("Error creating transaction", { error: err.message })
+    logger.error("Error creating transaction", { 
+      error: err.message,
+      stack: err.stack,
+      requestBody: req.body
+    })
+    
+    // Check for validation errors
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ 
+        error: "Validation error",
+        details: Object.values(err.errors).map((e: any) => e.message)
+      })
+    }
+    
     return res.status(500).json({ error: "Internal server error" })
   }
 }
 
 export async function updateTransaction(req: Request, res: Response) {
   try {
-    const userId = getUserId(req)
+    const userId = getUserIdFromRequest(req)
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" })
+      return res.status(401).json({ error: "Unauthorized - authentication required" })
     }
 
     const { id } = req.params as { id: string }
+    
+    if (!id) {
+      return res.status(400).json({ error: "Transaction ID is required" })
+    }
+
     const {
       amount,
       description,
@@ -181,9 +206,11 @@ export async function updateTransaction(req: Request, res: Response) {
 
     const item = await Transaction.findOne({ _id: id, userId })
     if (!item) {
+      logger.warn("Transaction not found for update", { userId, transactionId: id })
       return res.status(404).json({ error: "Transaction not found" })
     }
 
+    // Update fields if provided
     if (amount != null) item.amount = Number(amount)
     if (description) item.description = description.trim()
     if (category) item.category = category
@@ -204,26 +231,53 @@ export async function updateTransaction(req: Request, res: Response) {
     await item.save()
 
     logger.info("Transaction updated", { userId, transactionId: item._id })
-    return res.json(item)
+    
+    // Return transformed response
+    const response = {
+      id: item._id,
+      userId: item.userId,
+      date: item.date,
+      time: item.time,
+      description: item.description,
+      type: item.type,
+      amount: item.amount,
+      balance_after: item.balance_after,
+      channel: item.channel,
+      transaction_reference: item.transaction_reference,
+      counterparty: item.counterparty,
+      category: item.category,
+      legacy_type: item.type === "credit" ? "income" : "expense",
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt
+    }
+    
+    return res.json(response)
   } catch (err: any) {
-    logger.error("Error updating transaction", { error: err.message })
+    logger.error("Error updating transaction", { 
+      error: err.message,
+      transactionId: req.params.id
+    })
     return res.status(500).json({ error: "Internal server error" })
   }
 }
 
-
 export async function deleteTransaction(req: Request, res: Response) {
   try {
-    const userId = getUserId(req)
+    const userId = getUserIdFromRequest(req)
     if (!userId) {
-      return res.status(401).json({ error: "Unauthorized" })
+      return res.status(401).json({ error: "Unauthorized - authentication required" })
     }
     
     const { id } = req.params as { id: string }
     
+    if (!id) {
+      return res.status(400).json({ error: "Transaction ID is required" })
+    }
+    
     const result = await Transaction.deleteOne({ _id: id, userId })
     
     if (result.deletedCount === 0) {
+      logger.warn("Transaction not found for deletion", { userId, transactionId: id })
       return res.status(404).json({ error: "Transaction not found" })
     }
     
@@ -231,7 +285,10 @@ export async function deleteTransaction(req: Request, res: Response) {
     
     return res.status(204).send()
   } catch (err: any) {
-    logger.error("Error deleting transaction", { error: err.message })
+    logger.error("Error deleting transaction", { 
+      error: err.message,
+      transactionId: req.params.id
+    })
     return res.status(500).json({ error: "Internal server error" })
   }
 }
