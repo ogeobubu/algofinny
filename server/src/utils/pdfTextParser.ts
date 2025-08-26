@@ -1,5 +1,7 @@
+// server/src/utils/pdfTextParser.ts - Enhanced version
 import logger from "./logger.js"
 import { categorizeTransaction } from "./categorizer.js"
+import { parseOpayPDFText, OpayStatement } from "./opayParser.js"
 
 export interface ParsedStatement {
   accountInfo?: {
@@ -13,6 +15,7 @@ export interface ParsedStatement {
     closing_balance?: number
     total_debits?: number
     total_credits?: number
+    wallet_balance?: number
   }
   transactions: Array<{
     date: string
@@ -26,13 +29,121 @@ export interface ParsedStatement {
     counterparty?: string
     category?: string
   }>
+  bankType?: "opay" | "traditional"
 }
 
 export async function parsePDFTextToStructuredData(text: string): Promise<ParsedStatement> {
-  const result: ParsedStatement = { transactions: [] }
+  try {
+    // Detect bank type
+    const bankType = detectBankType(text)
+    
+    logger.info("Detected bank type", { bankType })
+    
+    if (bankType === "opay") {
+      // Use Opay-specific parser
+      const opayResult = parseOpayPDFText(text)
+      
+      // Convert to standard format
+      return {
+        accountInfo: opayResult.accountInfo,
+        transactions: opayResult.transactions,
+        bankType: "opay"
+      }
+    } else {
+      // Use traditional bank parser
+      const result = parseTraditionalBankStatement(text)
+      return {
+        ...result,
+        bankType: "traditional"
+      }
+    }
+  } catch (error) {
+    logger.error("Error in PDF text parsing", { error: String(error) })
+    throw error
+  }
+}
+
+function detectBankType(text: string): "opay" | "traditional" {
+  const textLower = text.toLowerCase()
+  
+  // Opay indicators
+  const opayIndicators = [
+    "opay",
+    "o-pay",
+    "digital wallet",
+    "wallet balance",
+    "mobile money",
+    "fintech",
+    "pos transaction",
+    "p2p transfer",
+    "qr payment",
+    "mobile app",
+    "wallet funding"
+  ]
+  
+  // Traditional bank indicators  
+  const traditionalIndicators = [
+    "first bank",
+    "access bank",
+    "gtbank",
+    "zenith bank",
+    "uba",
+    "fidelity bank",
+    "sterling bank",
+    "wema bank",
+    "union bank",
+    "current account",
+    "savings account",
+    "account statement",
+    "sort code",
+    "swift code"
+  ]
+  
+  let opayScore = 0
+  let traditionalScore = 0
+  
+  // Count indicators
+  for (const indicator of opayIndicators) {
+    if (textLower.includes(indicator)) {
+      opayScore++
+    }
+  }
+  
+  for (const indicator of traditionalIndicators) {
+    if (textLower.includes(indicator)) {
+      traditionalScore++
+    }
+  }
+  
+  // Additional heuristics
+  if (textLower.includes("opay") || textLower.includes("o-pay")) {
+    opayScore += 5 // Strong indicator
+  }
+  
+  if (textLower.includes("wallet") && (textLower.includes("balance") || textLower.includes("funding"))) {
+    opayScore += 3
+  }
+  
+  // Phone number as account identifier suggests digital bank
+  if (text.match(/(?:Account|Phone).*?(?:\+234|0)[1-9]\d{9}/)) {
+    opayScore += 2
+  }
+  
+  // Traditional account number format
+  if (text.match(/\d{10,}/)) {
+    traditionalScore += 1
+  }
+  
+  logger.info("Bank type detection scores", { opayScore, traditionalScore })
+  
+  return opayScore > traditionalScore ? "opay" : "traditional"
+}
+
+function parseTraditionalBankStatement(text: string): Omit<ParsedStatement, 'bankType'> {
+  const result: Omit<ParsedStatement, 'bankType'> = { transactions: [] }
   
   try {
-    // Common Nigerian bank patterns
+    // Traditional Nigerian bank patterns
     const patterns = [
       // Account number patterns
       { 
@@ -62,6 +173,15 @@ export async function parsePDFTextToStructuredData(text: string): Promise<Parsed
       // Bank name patterns
       { 
         regex: /Bank\s*Name[:]?\s*([A-Z\s]+)/i, 
+        handler: (match: RegExpMatchArray) => {
+          result.accountInfo = result.accountInfo || {} as any
+          result.accountInfo.bank_name = match[1].trim()
+        }
+      },
+      
+      // Detect bank from header or footer
+      {
+        regex: /(First Bank|Access Bank|GTBank|Zenith Bank|UBA|Fidelity Bank|Sterling Bank|Wema Bank|Union Bank)/i,
         handler: (match: RegExpMatchArray) => {
           result.accountInfo = result.accountInfo || {} as any
           result.accountInfo.bank_name = match[1].trim()
@@ -151,7 +271,8 @@ export async function parsePDFTextToStructuredData(text: string): Promise<Parsed
             amount: Math.abs(amount),
             balance_after: match[5] ? parseFloat(match[5].replace(/,/g, '')) : undefined,
             category: categorizeTransaction(description),
-            transaction_reference: match[3] && match[3].match(/[A-Z0-9]{6,}/) ? match[3] : undefined
+            transaction_reference: match[3] && match[3].match(/[A-Z0-9]{6,}/) ? match[3] : undefined,
+            channel: "Bank Statement Import"
           }
 
           // Basic validation to avoid false positives
@@ -172,7 +293,7 @@ export async function parsePDFTextToStructuredData(text: string): Promise<Parsed
     }
 
   } catch (error) {
-    logger.error("Error parsing PDF text", { error: String(error) })
+    logger.error("Error parsing traditional bank statement", { error: String(error) })
     throw error
   }
 

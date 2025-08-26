@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react"
 import { Transaction } from "@/lib/types"
 import { getAuthHeaders, removeToken } from "@/lib/auth"
 import { SummaryCards } from "./summary-cards"
+import OpayUploadGuide from "./opay-upload"
 
 interface DashboardProps {
   onLogout: () => void
@@ -259,6 +260,8 @@ export function Dashboard({ onLogout }: DashboardProps) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <SummaryCards transactions={transactions} loading={loading} />
         </div>
+
+        <OpayUploadGuide />
 
         {/* Enhanced AI Advice Section */}
         <div className="bg-gradient-to-r from-purple-600/20 to-blue-600/20 border border-purple-500/30 rounded-xl p-6 mb-8">
